@@ -1,5 +1,5 @@
 [package]
-name = "defender-for-endpoint-cli"
+name = "mde"
 version = "0.1.0"
 edition = "2024"
 description = "CLI tool for Microsoft Defender for Endpoint API"
@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/hiboma/defender-for-endpoint-ci"
 
 [[bin]]
-name = "defender-for-endpoint-cli"
+name = "mde"
 path = "src/main.rs"
 
 [lib]

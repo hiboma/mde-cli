@@ -76,14 +76,17 @@ async fn run(cli: Cli) -> Result<(), AppError> {
     }
 
     // Check if we should route through the agent.
+    // Commands without a subaction (e.g. `mde alerts` without `list`) display help locally.
     if let Some(ref agent_token) = cli.token {
-        let socket_path = cli
-            .socket
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(mde::agent::resolve_socket_path);
+        if requires_agent_routing(&command) {
+            let socket_path = cli
+                .socket
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(mde::agent::resolve_socket_path);
 
-        return route_through_agent(&command, &socket_path, agent_token).await;
+            return route_through_agent(&command, &socket_path, agent_token).await;
+        }
     }
 
     let config = Config::load().unwrap_or_default();
@@ -265,6 +268,20 @@ async fn route_through_agent(
 
     print!("{}", output);
     Ok(())
+}
+
+/// Check if a command has a subaction and should be routed through the agent.
+/// Commands without a subaction (e.g. `mde alerts`) only display help,
+/// which can be handled locally without agent involvement.
+fn requires_agent_routing(command: &Commands) -> bool {
+    match command {
+        Commands::Alerts { command } => command.is_some(),
+        Commands::Incidents { command } => command.is_some(),
+        Commands::Hunting { command } => command.is_some(),
+        Commands::Machines { command } => command.is_some(),
+        Commands::Auth { command } => command.is_some(),
+        Commands::Agent { .. } => false, // agent commands are handled separately
+    }
 }
 
 /// Extract command name, action, and remaining args from a Commands variant.

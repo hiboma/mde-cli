@@ -6,7 +6,7 @@ Accepted (implemented)
 
 ## Context
 
-`mde` CLI は `MDE_ACCESS_TOKEN` 環境変数や OAuth2 認証情報（`MDE_TENANT_ID`, `MDE_CLIENT_ID`, `MDE_CLIENT_SECRET`）から API トークンを取得します。Claude Code のような LLM エージェントツールと組み合わせる場合、`op run -- claude` のように 1Password の子プロセスとして起動すると、API トークンが LLM エージェントのプロセス空間に平文で存在します。
+`mde-cli` CLI は `MDE_ACCESS_TOKEN` 環境変数や OAuth2 認証情報（`MDE_TENANT_ID`, `MDE_CLIENT_ID`, `MDE_CLIENT_SECRET`）から API トークンを取得します。Claude Code のような LLM エージェントツールと組み合わせる場合、`op run -- claude` のように 1Password の子プロセスとして起動すると、API トークンが LLM エージェントのプロセス空間に平文で存在します。
 
 これにより以下のリスクがあります:
 
@@ -21,7 +21,7 @@ ssh-agent と同じモデルで、認証情報を別プロセスに隔離する 
 ### Architecture
 
 ```
-LLM Agent --> mde (client mode) --UDS--> mde agent (op run 下で起動)
+LLM Agent --> mde-cli (client mode) --UDS--> mde-cli agent (op run 下で起動)
               セッショントークンのみ保持    API トークンを保持、API を実行
 ```
 
@@ -29,12 +29,12 @@ LLM Agent --> mde (client mode) --UDS--> mde agent (op run 下で起動)
 
 ```bash
 # Agent の起動 (ssh-agent パターン)
-eval "$(op run --env-file .env.1password -- mde agent start)"
+eval "$(op run --env-file .env.1password -- mde-cli agent start)"
 
 # Agent の管理
-mde agent start [--socket PATH] [--config PATH] [--foreground]
-mde agent stop [--socket PATH] [--all]
-mde agent status [--socket PATH]
+mde-cli agent start [--socket PATH] [--config PATH] [--foreground]
+mde-cli agent stop [--socket PATH] [--all]
+mde-cli agent status [--socket PATH]
 ```
 
 ### Environment Variables

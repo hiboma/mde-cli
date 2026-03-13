@@ -1,4 +1,4 @@
-# mde - Microsoft Defender for Endpoint CLI
+# mde-cli - Microsoft Defender for Endpoint CLI
 
 A command-line tool for interacting with the [Microsoft Defender for Endpoint API](https://learn.microsoft.com/en-us/defender-endpoint/api/apis-intro).
 
@@ -22,12 +22,12 @@ cargo install --path .
 ### Build from source
 
 ```bash
-git clone https://github.com/hiboma/defender-for-endpoint-ci.git
-cd defender-for-endpoint-ci
+git clone https://github.com/hiboma/microsoft-defender-for-endpoint-cli.git
+cd microsoft-defender-for-endpoint-cli
 cargo build --release
 ```
 
-The binary will be at `target/release/mde`.
+The binary will be at `target/release/mde-cli`.
 
 ## Configuration
 
@@ -72,7 +72,7 @@ client_secret = "your-client-secret"
 
 ```bash
 # Device code flow (interactive)
-mde auth device-code
+mde-cli auth device-code
 
 # Client credentials (non-interactive)
 export MDE_TENANT_ID="your-tenant-id"
@@ -83,52 +83,52 @@ export MDE_CLIENT_SECRET="your-secret"
 ### Alerts
 
 ```bash
-mde alerts list
-mde alerts get --id <alert-id>
-mde alerts update --id <alert-id> --status resolved
-mde alerts files --id <alert-id>
-mde alerts ips --id <alert-id>
-mde alerts domains --id <alert-id>
+mde-cli alerts list
+mde-cli alerts get --id <alert-id>
+mde-cli alerts update --id <alert-id> --status resolved
+mde-cli alerts files --id <alert-id>
+mde-cli alerts ips --id <alert-id>
+mde-cli alerts domains --id <alert-id>
 ```
 
 ### Incidents
 
 ```bash
-mde incidents list
-mde incidents get --id <incident-id>
+mde-cli incidents list
+mde-cli incidents get --id <incident-id>
 ```
 
 ### Advanced Hunting
 
 ```bash
-mde hunting run --query "DeviceProcessEvents | take 10"
+mde-cli hunting run --query "DeviceProcessEvents | take 10"
 ```
 
 ### Machines
 
 ```bash
-mde machines list
-mde machines get --id <machine-id>
-mde machines timeline --id <machine-id>
-mde machines logon-users --id <machine-id>
+mde-cli machines list
+mde-cli machines get --id <machine-id>
+mde-cli machines timeline --id <machine-id>
+mde-cli machines logon-users --id <machine-id>
 ```
 
 ### Agent Mode (Credential Isolation)
 
-Agent mode isolates credentials from the process that invokes `mde` commands. This is useful when running under LLM agents (e.g., Claude Code) where you want to prevent credential leakage via prompt injection.
+Agent mode isolates credentials from the process that invokes `mde-cli` commands. This is useful when running under LLM agents (e.g., Claude Code) where you want to prevent credential leakage via prompt injection.
 
 ```bash
 # Start the agent (credentials stay in this process)
-eval "$(op run --env-file .env.1password -- mde agent start)"
+eval "$(op run --env-file .env.1password -- mde-cli agent start)"
 
 # Now commands route through the agent automatically
-mde alerts list
+mde-cli alerts list
 
 # Check agent status
-mde agent status
+mde-cli agent status
 
 # Stop the agent
-mde agent stop
+mde-cli agent stop
 ```
 
 See [ADR-0001](docs/adr/0001-agent-mode-for-credential-isolation.md) for the design rationale.
@@ -137,13 +137,13 @@ See [ADR-0001](docs/adr/0001-agent-mode-for-credential-isolation.md) for the des
 
 ```bash
 # JSON output (default)
-mde alerts list --output json
+mde-cli alerts list --output json
 
 # Table output
-mde alerts list --output table
+mde-cli alerts list --output table
 
 # Raw API response
-mde alerts list --raw
+mde-cli alerts list --raw
 ```
 
 ## Required API Permissions

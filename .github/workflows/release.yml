@@ -17,16 +17,16 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: mde
+            artifact: mde-cli
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            artifact: mde
+            artifact: mde-cli
           - target: x86_64-apple-darwin
             os: macos-latest
-            artifact: mde
+            artifact: mde-cli
           - target: aarch64-apple-darwin
             os: macos-latest
-            artifact: mde
+            artifact: mde-cli
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -51,12 +51,12 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../mde-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+          tar czf ../../../mde-cli-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: mde-${{ matrix.target }}
-          path: mde-${{ matrix.target }}.tar.gz
+          name: mde-cli-${{ matrix.target }}
+          path: mde-cli-${{ matrix.target }}.tar.gz
 
   release:
     name: Release

@@ -11,7 +11,7 @@ use crate::output::OutputFormat;
 
 #[derive(Parser)]
 #[command(
-    name = "mde",
+    name = "mde-cli",
     version,
     about = "CLI tool for Microsoft Defender for Endpoint API",
     subcommand_required = false,

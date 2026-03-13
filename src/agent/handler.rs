@@ -127,10 +127,10 @@ fn is_dangerous_flag(arg: &str) -> bool {
 }
 
 /// Build CLI argument vector from an AgentRequest.
-/// Reconstructs: ["mde", <command>, <action>, ...args]
+/// Reconstructs: ["mde-cli", <command>, <action>, ...args]
 fn build_cli_args(request: &AgentRequest) -> Vec<String> {
     let mut args = vec![
-        "mde".to_string(),
+        "mde-cli".to_string(),
         request.command.clone(),
         request.action.clone(),
     ];
@@ -152,7 +152,10 @@ mod tests {
             args: vec!["--severity".to_string(), "HIGH".to_string()],
         };
         let args = build_cli_args(&req);
-        assert_eq!(args, vec!["mde", "alerts", "list", "--severity", "HIGH"]);
+        assert_eq!(
+            args,
+            vec!["mde-cli", "alerts", "list", "--severity", "HIGH"]
+        );
     }
 
     #[test]

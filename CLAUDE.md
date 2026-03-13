@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`mde` is a CLI tool for Microsoft Defender for Endpoint API, written in Rust.
+`mde-cli` is a CLI tool for Microsoft Defender for Endpoint API, written in Rust.
 
 ## Build & Test
 

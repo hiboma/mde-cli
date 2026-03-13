@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod alerts;
 pub mod auth;
 pub mod hunting;
@@ -40,6 +41,14 @@ pub struct Cli {
     /// Output raw API response without extracting data
     #[arg(long, global = true)]
     pub raw: bool,
+
+    /// Agent socket path (hidden, set by agent start)
+    #[arg(long, env = "MDE_AGENT_SOCKET", global = true, hide = true)]
+    pub socket: Option<String>,
+
+    /// Agent session token (hidden, set by agent start)
+    #[arg(long, env = "MDE_AGENT_TOKEN", global = true, hide = true)]
+    pub token: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -74,6 +83,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<machines::MachinesCommand>,
     },
+    /// Manage the credential isolation agent
+    #[command(subcommand_required = true, arg_required_else_help = true)]
+    Agent {
+        #[command(subcommand)]
+        command: agent::AgentCommand,
+    },
 }
 
 impl Commands {
@@ -84,6 +99,7 @@ impl Commands {
             Commands::Incidents { .. } => "incidents",
             Commands::Hunting { .. } => "hunting",
             Commands::Machines { .. } => "machines",
+            Commands::Agent { .. } => "agent",
         }
     }
 }

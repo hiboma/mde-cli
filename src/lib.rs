@@ -1,8 +1,10 @@
+pub mod agent;
 pub mod auth;
 pub mod cli;
 pub mod client;
 pub mod commands;
 pub mod config;
+pub mod dispatch;
 pub mod error;
 pub mod models;
 pub mod output;

@@ -1,22 +1,64 @@
 use clap::{CommandFactory, Parser};
+use std::path::PathBuf;
 use std::process;
 
+use mde::auth::StaticTokenAuth;
 use mde::auth::oauth2::OAuth2Auth;
-use mde::auth::AuthProvider;
+use mde::cli::agent::AgentCommand;
 use mde::cli::{Cli, Commands};
 use mde::client::MdeClient;
 use mde::config::Config;
 use mde::error::AppError;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
 
-    if let Err(e) = run(cli).await {
-        eprintln!("Error: {}", e);
-        process::exit(e.exit_code());
+    // Handle agent start (fork) before creating tokio runtime.
+    // fork() is unsafe in multi-threaded processes, so we must do it here.
+    if let Some(Commands::Agent {
+        command:
+            AgentCommand::Start {
+                socket,
+                config,
+                foreground,
+            },
+    }) = &cli.command
+        && !foreground
+    {
+        let session_token = mde::agent::generate_token();
+        let socket_path = socket.as_ref().map(PathBuf::from);
+        let config_path = config.as_ref().map(PathBuf::from);
+
+        if let Err(e) = mde::agent::ensure_socket_dir() {
+            eprintln!("Error: failed to create socket directory: {}", e);
+            process::exit(1);
+        }
+
+        match mde::agent::server::fork_into_background(
+            socket_path,
+            config_path,
+            session_token.clone(),
+        ) {
+            Ok((child_pid, socket_path)) => {
+                mde::agent::server::print_shell_vars(&socket_path, &session_token, child_pid);
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error: failed to start agent: {}", e);
+                process::exit(1);
+            }
+        }
     }
+
+    // Create tokio runtime for all other operations.
+    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    rt.block_on(async {
+        if let Err(e) = run(cli).await {
+            eprintln!("Error: {}", e);
+            process::exit(e.exit_code());
+        }
+    });
 }
 
 async fn run(cli: Cli) -> Result<(), AppError> {
@@ -27,6 +69,22 @@ async fn run(cli: Cli) -> Result<(), AppError> {
             return Ok(());
         }
     };
+
+    // Handle agent subcommands.
+    if let Commands::Agent { command: agent_cmd } = &command {
+        return handle_agent_command(agent_cmd).await;
+    }
+
+    // Check if we should route through the agent.
+    if let Some(ref agent_token) = cli.token {
+        let socket_path = cli
+            .socket
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(mde::agent::resolve_socket_path);
+
+        return route_through_agent(&command, &socket_path, agent_token).await;
+    }
 
     let config = Config::load().unwrap_or_default();
 
@@ -138,11 +196,129 @@ async fn run(cli: Cli) -> Result<(), AppError> {
     }
 }
 
-/// Simple static token auth for MDE_ACCESS_TOKEN env var usage.
-struct StaticTokenAuth(String);
+/// Handle agent subcommands (start foreground, stop, status).
+async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
+    match cmd {
+        AgentCommand::Start {
+            socket,
+            config,
+            foreground,
+        } => {
+            // Foreground mode (background is handled before tokio runtime).
+            debug_assert!(*foreground, "background mode should be handled in main()");
 
-impl AuthProvider for StaticTokenAuth {
-    fn token(&self) -> Result<String, AppError> {
-        Ok(self.0.clone())
+            let session_token = mde::agent::generate_token();
+            let socket_path = socket.as_ref().map(PathBuf::from);
+            let config_path = config.as_ref().map(PathBuf::from);
+
+            mde::agent::ensure_socket_dir()
+                .map_err(|e| AppError::Config(format!("failed to create socket dir: {}", e)))?;
+
+            let pid = std::process::id();
+            let actual_socket =
+                socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
+
+            mde::agent::server::print_shell_vars(&actual_socket, &session_token, pid);
+
+            mde::agent::server::start(Some(actual_socket), config_path, &session_token)
+                .await
+                .map_err(|e| AppError::Config(format!("agent error: {}", e)))?;
+
+            Ok(())
+        }
+        AgentCommand::Stop { socket, all } => {
+            let msg = if *all {
+                mde::agent::client::stop_all()?
+            } else {
+                let socket_path = socket
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(mde::agent::resolve_socket_path);
+                mde::agent::client::stop(&socket_path)?
+            };
+            println!("{}", msg);
+            Ok(())
+        }
+        AgentCommand::Status { socket } => {
+            let socket_path = socket
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(mde::agent::resolve_socket_path);
+            let msg = mde::agent::client::status(&socket_path).await?;
+            println!("{}", msg);
+            Ok(())
+        }
     }
 }
+
+/// Route a command through the agent via UDS.
+async fn route_through_agent(
+    command: &Commands,
+    socket_path: &std::path::Path,
+    agent_token: &str,
+) -> Result<(), AppError> {
+    let (cmd_name, action, args) = extract_command_args(command);
+
+    let output =
+        mde::agent::client::send_command(&cmd_name, &action, &args, socket_path, agent_token)
+            .await?;
+
+    print!("{}", output);
+    Ok(())
+}
+
+/// Extract command name, action, and remaining args from a Commands variant.
+/// Global flags like --output and --raw are preserved and passed to the agent.
+/// Only agent-specific flags (--socket, --token) are stripped.
+fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
+    let cmd_name = command.name().to_string();
+
+    let all_args: Vec<String> = std::env::args().collect();
+    let mut action = String::new();
+    let mut extra_args = Vec::new();
+    let mut found_command = false;
+
+    // Only strip agent-specific flags that the server should not see.
+    // Global flags like --output, --raw, --tenant-id are passed through
+    // so the agent can honor the requested output format.
+    let strip_flags_with_value = ["--socket", "--token"];
+    let strip_flags_bool: [&str; 0] = [];
+
+    let mut skip_next = false;
+    for arg in all_args.iter().skip(1) {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        // Check if this flag should be stripped (exact match or --flag=value).
+        let should_strip = strip_flags_with_value
+            .iter()
+            .any(|f| *arg == *f || arg.starts_with(&format!("{}=", f)))
+            || strip_flags_bool.iter().any(|f| *arg == *f);
+
+        if should_strip {
+            // If it's a --flag value (not --flag=value), skip the next arg too.
+            if strip_flags_with_value.iter().any(|f| *arg == *f) && !arg.contains('=') {
+                skip_next = true;
+            }
+            continue;
+        }
+
+        if !found_command {
+            if *arg == cmd_name || *arg == command.name() {
+                found_command = true;
+            }
+            continue;
+        }
+
+        if action.is_empty() {
+            action = arg.clone();
+        } else {
+            extra_args.push(arg.clone());
+        }
+    }
+
+    (cmd_name, action, extra_args)
+}
+

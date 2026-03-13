@@ -167,10 +167,7 @@ pub fn print_shell_vars(socket_path: &std::path::Path, token: &str, pid: u32) {
         "MDE_AGENT_SOCKET={}; export MDE_AGENT_SOCKET;",
         socket_path.display()
     );
-    println!(
-        "MDE_AGENT_TOKEN={}; export MDE_AGENT_TOKEN;",
-        token
-    );
+    println!("MDE_AGENT_TOKEN={}; export MDE_AGENT_TOKEN;", token);
     println!("MDE_AGENT_PID={}; export MDE_AGENT_PID;", pid);
     eprintln!("agent: pid {}", pid);
 }

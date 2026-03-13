@@ -58,12 +58,11 @@ impl OAuth2Auth {
 
     pub async fn fetch_token(&self) -> Result<String, AppError> {
         // Check cache
-        if let Ok(guard) = self.cache.lock() {
-            if let Some(ref cached) = *guard {
-                if Instant::now() < cached.expires_at {
-                    return Ok(cached.access_token.clone());
-                }
-            }
+        if let Ok(guard) = self.cache.lock()
+            && let Some(ref cached) = *guard
+            && Instant::now() < cached.expires_at
+        {
+            return Ok(cached.access_token.clone());
         }
 
         let params = [
@@ -75,7 +74,7 @@ impl OAuth2Auth {
 
         let resp = self
             .http
-            .post(&self.token_url())
+            .post(self.token_url())
             .form(&params)
             .send()
             .await
@@ -98,7 +97,8 @@ impl OAuth2Auth {
             .await
             .map_err(|e| AppError::Auth(format!("failed to parse token response: {}", e)))?;
 
-        let expires_at = Instant::now() + Duration::from_secs(token_resp.expires_in.saturating_sub(60));
+        let expires_at =
+            Instant::now() + Duration::from_secs(token_resp.expires_in.saturating_sub(60));
 
         if let Ok(mut guard) = self.cache.lock() {
             *guard = Some(CachedToken {

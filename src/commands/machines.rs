@@ -70,8 +70,7 @@ fn print_machines_table(value: &serde_json::Value) {
                 .get("healthStatus")
                 .and_then(|h| h.as_str())
                 .unwrap_or("-");
-            let last_seen =
-                format_timestamp(item.get("lastSeen").and_then(|t| t.as_str()));
+            let last_seen = format_timestamp(item.get("lastSeen").and_then(|t| t.as_str()));
 
             println!(
                 "{:<42} {:<30} {:<20} {:<14} {:<24}",
@@ -110,11 +109,7 @@ async fn timeline(
     let path = format!("/api/machines/{}/timeline", args.id);
     let query = vec![("$top".to_string(), args.top.to_string())];
 
-    let resp: serde_json::Value = client
-        .get_with_query(&path, &query)
-        .await?
-        .json()
-        .await?;
+    let resp: serde_json::Value = client.get_with_query(&path, &query).await?.json().await?;
 
     match output_format {
         OutputFormat::Json | OutputFormat::JsonMinify => {
@@ -130,15 +125,11 @@ async fn timeline(
 fn print_timeline_table(value: &serde_json::Value) {
     use crate::output::table::{format_timestamp, truncate};
 
-    println!(
-        "{:<24} {:<20} {:<50}",
-        "TIME", "ACTION", "DETAILS"
-    );
+    println!("{:<24} {:<20} {:<50}", "TIME", "ACTION", "DETAILS");
 
     if let Some(data) = value.get("value").and_then(|d| d.as_array()) {
         for item in data {
-            let time =
-                format_timestamp(item.get("eventTime").and_then(|t| t.as_str()));
+            let time = format_timestamp(item.get("eventTime").and_then(|t| t.as_str()));
             let action = item
                 .get("actionType")
                 .and_then(|a| a.as_str())
@@ -198,8 +189,7 @@ fn print_logon_users_table(value: &serde_json::Value) {
                 .get("accountDomain")
                 .and_then(|d| d.as_str())
                 .unwrap_or("-");
-            let last_seen =
-                format_timestamp(item.get("lastSeenDateTime").and_then(|t| t.as_str()));
+            let last_seen = format_timestamp(item.get("lastSeenDateTime").and_then(|t| t.as_str()));
             let logon_type = item
                 .get("logonTypes")
                 .and_then(|l| l.as_str())

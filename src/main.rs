@@ -77,16 +77,16 @@ async fn run(cli: Cli) -> Result<(), AppError> {
 
     // Check if we should route through the agent.
     // Commands without a subaction (e.g. `mde alerts` without `list`) display help locally.
-    if let Some(ref agent_token) = cli.token {
-        if requires_agent_routing(&command) {
-            let socket_path = cli
-                .socket
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or_else(mde::agent::resolve_socket_path);
+    if let Some(ref agent_token) = cli.token
+        && requires_agent_routing(&command)
+    {
+        let socket_path = cli
+            .socket
+            .as_ref()
+            .map(PathBuf::from)
+            .unwrap_or_else(mde::agent::resolve_socket_path);
 
-            return route_through_agent(&command, &socket_path, agent_token).await;
-        }
+        return route_through_agent(&command, &socket_path, agent_token).await;
     }
 
     let config = Config::load().unwrap_or_default();
@@ -151,36 +151,28 @@ async fn run(cli: Cli) -> Result<(), AppError> {
     };
 
     match &command {
-        Commands::Alerts {
-            command: Some(cmd),
-        } => {
+        Commands::Alerts { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",
             )?;
             mde::commands::alerts::handle(&client, cmd, cli.output, cli.raw).await
         }
-        Commands::Incidents {
-            command: Some(cmd),
-        } => {
+        Commands::Incidents { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://graph.microsoft.com",
                 "https://graph.microsoft.com/.default",
             )?;
             mde::commands::incidents::handle(&client, cmd, cli.output, cli.raw).await
         }
-        Commands::Hunting {
-            command: Some(cmd),
-        } => {
+        Commands::Hunting { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",
             )?;
             mde::commands::hunting::handle(&client, cmd, cli.output).await
         }
-        Commands::Machines {
-            command: Some(cmd),
-        } => {
+        Commands::Machines { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",
@@ -218,8 +210,7 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
                 .map_err(|e| AppError::Config(format!("failed to create socket dir: {}", e)))?;
 
             let pid = std::process::id();
-            let actual_socket =
-                socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
+            let actual_socket = socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
 
             mde::agent::server::print_shell_vars(&actual_socket, &session_token, pid);
 
@@ -338,4 +329,3 @@ fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
 
     (cmd_name, action, extra_args)
 }
-

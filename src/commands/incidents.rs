@@ -91,14 +91,9 @@ fn print_incidents_table(value: &serde_json::Value) {
                 .get("displayName")
                 .and_then(|n| n.as_str())
                 .unwrap_or("-");
-            let severity = item
-                .get("severity")
-                .and_then(|s| s.as_str())
-                .unwrap_or("-");
+            let severity = item.get("severity").and_then(|s| s.as_str()).unwrap_or("-");
             let status = item.get("status").and_then(|s| s.as_str()).unwrap_or("-");
-            let created = format_timestamp(
-                item.get("createdDateTime").and_then(|t| t.as_str()),
-            );
+            let created = format_timestamp(item.get("createdDateTime").and_then(|t| t.as_str()));
 
             println!(
                 "{:<8} {:<55} {:<14} {:<10} {:<24}",
@@ -168,10 +163,7 @@ async fn update(
     }
 
     if let Some(ref comment) = args.comment {
-        body.insert(
-            "resolvingComment".to_string(),
-            serde_json::json!(comment),
-        );
+        body.insert("resolvingComment".to_string(), serde_json::json!(comment));
     }
 
     if body.is_empty() {

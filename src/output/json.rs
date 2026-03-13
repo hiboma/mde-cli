@@ -19,11 +19,7 @@ pub fn print_json_raw(value: &serde_json::Value, minify: bool) -> Result<(), App
     writeln_stdout(&output)
 }
 
-pub fn print_json_data(
-    value: &serde_json::Value,
-    raw: bool,
-    minify: bool,
-) -> Result<(), AppError> {
+pub fn print_json_data(value: &serde_json::Value, raw: bool, minify: bool) -> Result<(), AppError> {
     if raw {
         print_json_raw(value, minify)
     } else {

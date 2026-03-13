@@ -104,8 +104,10 @@ fn wait_for_auth_code(
     let state = generate_state();
     let authorize_url = build_authorize_url(tenant_id, client_id, scope, &state, &pkce);
 
-    let listener = std::net::TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT))
-        .map_err(|e| AppError::Network(format!("failed to bind localhost:{}: {}", REDIRECT_PORT, e)))?;
+    let listener =
+        std::net::TcpListener::bind(format!("127.0.0.1:{}", REDIRECT_PORT)).map_err(|e| {
+            AppError::Network(format!("failed to bind localhost:{}: {}", REDIRECT_PORT, e))
+        })?;
 
     eprintln!("Opening browser for authentication...");
     open::that(&authorize_url)
@@ -123,7 +125,9 @@ fn wait_for_auth_code(
             let request = String::from_utf8_lossy(&buf[..n]);
 
             let result = if let Some(query_start) = request.find('?') {
-                let query_end = request[query_start..].find(' ').unwrap_or(request.len() - query_start);
+                let query_end = request[query_start..]
+                    .find(' ')
+                    .unwrap_or(request.len() - query_start);
                 let query = &request[query_start + 1..query_start + query_end];
                 parse_callback_query(query)
             } else {
@@ -131,8 +135,12 @@ fn wait_for_auth_code(
             };
 
             let response_body = match &result {
-                Some(_) => "<html><body><h1>Authentication successful</h1><p>You can close this window.</p></body></html>",
-                None => "<html><body><h1>Authentication failed</h1><p>No authorization code received.</p></body></html>",
+                Some(_) => {
+                    "<html><body><h1>Authentication successful</h1><p>You can close this window.</p></body></html>"
+                }
+                None => {
+                    "<html><body><h1>Authentication failed</h1><p>No authorization code received.</p></body></html>"
+                }
             };
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -217,15 +225,14 @@ pub async fn browser_login(
     client_id: &str,
     scope: &str,
 ) -> Result<(String, u64), AppError> {
-    let (code, verifier) =
-        tokio::task::spawn_blocking({
-            let tenant_id = tenant_id.to_string();
-            let client_id = client_id.to_string();
-            let scope = scope.to_string();
-            move || wait_for_auth_code(&tenant_id, &client_id, &scope)
-        })
-        .await
-        .map_err(|e| AppError::Auth(format!("browser auth task failed: {}", e)))??;
+    let (code, verifier) = tokio::task::spawn_blocking({
+        let tenant_id = tenant_id.to_string();
+        let client_id = client_id.to_string();
+        let scope = scope.to_string();
+        move || wait_for_auth_code(&tenant_id, &client_id, &scope)
+    })
+    .await
+    .map_err(|e| AppError::Auth(format!("browser auth task failed: {}", e)))??;
 
     eprintln!("Authentication successful.");
     exchange_code(tenant_id, client_id, &code, &verifier, scope).await
@@ -266,6 +273,9 @@ mod tests {
     #[test]
     fn test_urlencoded() {
         assert_eq!(urlencoded("a b"), "a%20b");
-        assert_eq!(urlencoded("https://example.com"), "https%3A%2F%2Fexample.com");
+        assert_eq!(
+            urlencoded("https://example.com"),
+            "https%3A%2F%2Fexample.com"
+        );
     }
 }

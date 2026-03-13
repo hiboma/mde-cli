@@ -57,7 +57,9 @@ pub async fn send_command(
         )),
         ResponseStatus::Denied => Err(AppError::Config(format!(
             "agent denied request: {}",
-            response.error.unwrap_or_else(|| "unknown reason".to_string())
+            response
+                .error
+                .unwrap_or_else(|| "unknown reason".to_string())
         ))),
     }
 }

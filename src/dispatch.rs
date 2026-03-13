@@ -44,9 +44,7 @@ pub async fn dispatch_from_args(args: &[String]) -> Result<String, AppError> {
             .or_else(|| std::env::var("MDE_TENANT_ID").ok())
             .or_else(|| config.auth.tenant_id.clone())
             .ok_or_else(|| {
-                AppError::Config(
-                    "tenant_id not set. Use --tenant-id or MDE_TENANT_ID.".to_string(),
-                )
+                AppError::Config("tenant_id not set. Use --tenant-id or MDE_TENANT_ID.".to_string())
             })?;
 
         let client_id = cli
@@ -95,36 +93,28 @@ where
         .map_err(|e| AppError::Config(format!("failed to capture stdout: {}", e)))?;
 
     let result = match command {
-        Commands::Alerts {
-            command: Some(cmd),
-        } => {
+        Commands::Alerts { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",
             )?;
             crate::commands::alerts::handle(&client, cmd, output_format, raw).await
         }
-        Commands::Incidents {
-            command: Some(cmd),
-        } => {
+        Commands::Incidents { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://graph.microsoft.com",
                 "https://graph.microsoft.com/.default",
             )?;
             crate::commands::incidents::handle(&client, cmd, output_format, raw).await
         }
-        Commands::Hunting {
-            command: Some(cmd),
-        } => {
+        Commands::Hunting { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",
             )?;
             crate::commands::hunting::handle(&client, cmd, output_format).await
         }
-        Commands::Machines {
-            command: Some(cmd),
-        } => {
+        Commands::Machines { command: Some(cmd) } => {
             let client = build_mde_client(
                 "https://api.security.microsoft.com",
                 "https://api.securitycenter.microsoft.com/.default",

@@ -49,7 +49,10 @@ fn print_hunting_table(value: &serde_json::Value) {
             .filter_map(|col| col.get("Name").and_then(|n| n.as_str()))
             .collect(),
         None => {
-            println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            );
             return;
         }
     };

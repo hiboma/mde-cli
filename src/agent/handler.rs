@@ -117,12 +117,7 @@ pub async fn handle_request(
 
 /// Flags that must not be injected via agent args.
 /// These could override authentication parameters or agent routing.
-const BLOCKED_FLAGS: &[&str] = &[
-    "--tenant-id",
-    "--client-id",
-    "--socket",
-    "--token",
-];
+const BLOCKED_FLAGS: &[&str] = &["--tenant-id", "--client-id", "--socket", "--token"];
 
 /// Check if an argument is a dangerous flag that should be rejected.
 fn is_dangerous_flag(arg: &str) -> bool {
@@ -190,7 +185,8 @@ mod tests {
             args: vec![],
         };
 
-        let resp = handle_request(req, "correct-token", &whitelist, &rate_limiter, &audit_log).await;
+        let resp =
+            handle_request(req, "correct-token", &whitelist, &rate_limiter, &audit_log).await;
         assert_eq!(resp.status, crate::agent::protocol::ResponseStatus::Denied);
         assert_eq!(resp.error.unwrap(), "authentication failed");
     }

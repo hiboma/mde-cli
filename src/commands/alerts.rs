@@ -14,9 +14,13 @@ pub async fn handle(
         AlertsCommand::List(args) => list(client, args, output_format, raw).await,
         AlertsCommand::Get(args) => get(client, args, output_format).await,
         AlertsCommand::Update(args) => update(client, args, output_format).await,
-        AlertsCommand::Files(args) => related_entity(client, &args.id, "files", output_format).await,
+        AlertsCommand::Files(args) => {
+            related_entity(client, &args.id, "files", output_format).await
+        }
         AlertsCommand::Ips(args) => related_entity(client, &args.id, "ips", output_format).await,
-        AlertsCommand::Domains(args) => related_entity(client, &args.id, "domains", output_format).await,
+        AlertsCommand::Domains(args) => {
+            related_entity(client, &args.id, "domains", output_format).await
+        }
     }
 }
 
@@ -84,14 +88,9 @@ fn print_alerts_table(value: &serde_json::Value) {
         for item in data {
             let id = item.get("id").and_then(|i| i.as_str()).unwrap_or("-");
             let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("-");
-            let severity = item
-                .get("severity")
-                .and_then(|s| s.as_str())
-                .unwrap_or("-");
+            let severity = item.get("severity").and_then(|s| s.as_str()).unwrap_or("-");
             let status = item.get("status").and_then(|s| s.as_str()).unwrap_or("-");
-            let created = format_timestamp(
-                item.get("alertCreationTime").and_then(|t| t.as_str()),
-            );
+            let created = format_timestamp(item.get("alertCreationTime").and_then(|t| t.as_str()));
 
             println!(
                 "{:<40} {:<45} {:<14} {:<12} {:<24}",
@@ -138,27 +137,18 @@ async fn update(
         let c = Classification::from_str_loose(classification).ok_or_else(|| {
             AppError::InvalidInput(format!("unknown classification: {}", classification))
         })?;
-        body.insert(
-            "classification".to_string(),
-            serde_json::json!(c.as_str()),
-        );
+        body.insert("classification".to_string(), serde_json::json!(c.as_str()));
     }
 
     if let Some(ref determination) = args.determination {
         let d = Determination::from_str_loose(determination).ok_or_else(|| {
             AppError::InvalidInput(format!("unknown determination: {}", determination))
         })?;
-        body.insert(
-            "determination".to_string(),
-            serde_json::json!(d.as_str()),
-        );
+        body.insert("determination".to_string(), serde_json::json!(d.as_str()));
     }
 
     if let Some(ref assigned_to) = args.assigned_to {
-        body.insert(
-            "assignedTo".to_string(),
-            serde_json::json!(assigned_to),
-        );
+        body.insert("assignedTo".to_string(), serde_json::json!(assigned_to));
     }
 
     if let Some(ref comment) = args.comment {

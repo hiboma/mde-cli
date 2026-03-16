@@ -62,11 +62,18 @@ mod macos {
 
         let my_path = std::env::current_exe()?;
 
+        // Resolve symlinks before comparison. Homebrew installs place the
+        // binary in Cellar/ and creates a symlink under /opt/homebrew/bin/,
+        // so current_exe() and proc_pidpath() may return different paths for
+        // the same binary.
+        let my_path_resolved = my_path.canonicalize().unwrap_or(my_path.clone());
+        let peer_path_resolved = peer_path.canonicalize().unwrap_or(peer_path.clone());
+
         // Check that the peer is running the same binary.
-        if peer_path != my_path {
+        if peer_path_resolved != my_path_resolved {
             eprintln!(
                 "agent: peer binary mismatch: expected {:?}, got {:?}",
-                my_path, peer_path
+                my_path_resolved, peer_path_resolved
             );
             return Ok(false);
         }
@@ -120,10 +127,13 @@ mod linux {
         let peer_path = std::fs::read_link(format!("/proc/{}/exe", peer_pid))?;
         let my_path = std::env::current_exe()?;
 
-        if peer_path != my_path {
+        let my_path_resolved = my_path.canonicalize().unwrap_or(my_path.clone());
+        let peer_path_resolved = peer_path.canonicalize().unwrap_or(peer_path.clone());
+
+        if peer_path_resolved != my_path_resolved {
             eprintln!(
                 "agent: peer binary mismatch: expected {:?}, got {:?}",
-                my_path, peer_path
+                my_path_resolved, peer_path_resolved
             );
             return Ok(false);
         }

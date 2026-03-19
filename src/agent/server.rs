@@ -26,6 +26,10 @@ pub async fn start(
     session_token: &str,
     shared: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Sanitize environment and harden process before starting.
+    crate::agent::sanitize_env();
+    crate::agent::harden_process();
+
     let config = AgentConfig::load(config_path.as_deref());
 
     // SAFETY: getsid(0) is always safe.
@@ -112,6 +116,11 @@ pub fn fork_into_background(
             // Child process: create new session.
             // SAFETY: setsid() is always safe in forked child.
             unsafe { libc::setsid() };
+
+            // Sanitize environment and harden process immediately after fork,
+            // before tokio runtime creation. See ADR-0003.
+            crate::agent::sanitize_env();
+            crate::agent::harden_process();
 
             let child_pid = std::process::id();
             let actual_socket_path = pid_socket_path(child_pid);

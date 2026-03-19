@@ -11,22 +11,31 @@ pub struct SessionInfo {
     pub started_at: DateTime<Utc>,
 }
 
+/// Session file name varies by build profile to avoid debug/release conflicts.
+fn session_file_name() -> &'static str {
+    if cfg!(debug_assertions) {
+        "session.debug.json"
+    } else {
+        "session.json"
+    }
+}
+
 /// Resolve the session file path.
-/// Uses `$XDG_DATA_HOME/mde-cli/session.json` (default: `~/.local/share/mde-cli/session.json`).
+/// Uses `$XDG_DATA_HOME/mde-cli/<session-file>` (default: `~/.local/share/mde-cli/<session-file>`).
+/// Debug builds use `session.debug.json`; release builds use `session.json`.
 pub fn session_file_path() -> PathBuf {
+    let filename = session_file_name();
     if let Ok(data_home) = std::env::var("XDG_DATA_HOME") {
-        return PathBuf::from(data_home)
-            .join("mde-cli")
-            .join("session.json");
+        return PathBuf::from(data_home).join("mde-cli").join(filename);
     }
     if let Ok(home) = std::env::var("HOME") {
         return PathBuf::from(home)
             .join(".local")
             .join("share")
             .join("mde-cli")
-            .join("session.json");
+            .join(filename);
     }
-    PathBuf::from("/tmp/mde-cli-session.json")
+    PathBuf::from(format!("/tmp/mde-cli-{filename}"))
 }
 
 /// Write session info to disk with restricted permissions (0600).
@@ -97,7 +106,8 @@ mod tests {
     #[test]
     fn test_session_file_path_default() {
         let path = session_file_path();
-        assert_eq!(path.file_name().unwrap(), "session.json");
+        // Tests run as debug builds, so expect session.debug.json
+        assert_eq!(path.file_name().unwrap(), "session.debug.json");
         assert!(path.to_string_lossy().contains("mde-cli"));
     }
 

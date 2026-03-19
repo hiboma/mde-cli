@@ -258,12 +258,16 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
             println!("{}", msg);
             Ok(())
         }
-        AgentCommand::Status { socket } => {
-            let socket_path = socket
-                .as_ref()
-                .map(PathBuf::from)
-                .unwrap_or_else(mde::agent::resolve_socket_path);
-            let msg = mde::agent::client::status(&socket_path).await?;
+        AgentCommand::Status { socket, shared } => {
+            let msg = if *shared {
+                mde::agent::client::status_shared().await?
+            } else {
+                let socket_path = socket
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(mde::agent::resolve_socket_path);
+                mde::agent::client::status(&socket_path).await?
+            };
             println!("{}", msg);
             Ok(())
         }

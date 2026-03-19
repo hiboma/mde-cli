@@ -38,5 +38,8 @@ pub enum AgentCommand {
         /// Custom socket path
         #[arg(long)]
         socket: Option<String>,
+        /// Show status from shared session file instead of socket
+        #[arg(long)]
+        shared: bool,
     },
 }

@@ -78,6 +78,35 @@ pub async fn status(socket_path: &Path) -> Result<String, AppError> {
     }
 }
 
+/// Check the status of the shared agent via session.json.
+pub async fn status_shared() -> Result<String, AppError> {
+    let session_path = crate::agent::session::session_file_path();
+    match crate::agent::session::read_session() {
+        Some(session) => {
+            let socket_path = std::path::PathBuf::from(&session.socket_path);
+            let running = UnixStream::connect(&socket_path).await.is_ok();
+            let status = serde_json::json!({
+                "running": running,
+                "pid": session.pid,
+                "socket_path": session.socket_path,
+                "shared": true,
+                "session_file": session_path.display().to_string(),
+            });
+            Ok(serde_json::to_string_pretty(&status)
+                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e)))
+        }
+        None => {
+            let status = serde_json::json!({
+                "running": false,
+                "shared": true,
+                "session_file": session_path.display().to_string(),
+            });
+            Ok(serde_json::to_string_pretty(&status)
+                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e)))
+        }
+    }
+}
+
 /// Stop the agent by sending SIGTERM.
 pub fn stop(socket_path: &Path) -> Result<String, AppError> {
     let pid_file = crate::agent::pid_file_path(socket_path);

@@ -19,11 +19,11 @@ async fn run(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     let body = serde_json::json!({
-        "Query": args.query,
+        "query": args.query,
     });
 
     let resp: serde_json::Value = client
-        .post("/api/advancedhunting/run", &body)
+        .post("/v1.0/security/runHuntingQuery", &body)
         .await?
         .json()
         .await?;
@@ -40,13 +40,13 @@ async fn run(
 }
 
 fn print_hunting_table(value: &serde_json::Value) {
-    let schema = value.get("Schema").and_then(|s| s.as_array());
-    let results = value.get("Results").and_then(|r| r.as_array());
+    let schema = value.get("schema").and_then(|s| s.as_array());
+    let results = value.get("results").and_then(|r| r.as_array());
 
     let columns: Vec<&str> = match schema {
         Some(s) => s
             .iter()
-            .filter_map(|col| col.get("Name").and_then(|n| n.as_str()))
+            .filter_map(|col| col.get("name").and_then(|n| n.as_str()))
             .collect(),
         None => {
             println!(
@@ -84,5 +84,93 @@ fn print_hunting_table(value: &serde_json::Value) {
                 .collect();
             println!("{}", line.join(" "));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_request_body_uses_query_field() {
+        let query = "DeviceProcessEvents | take 10";
+        let body = json!({
+            "query": query,
+        });
+        assert_eq!(body["query"], query);
+        assert!(body.get("Query").is_none());
+        assert!(body.get("QueryString").is_none());
+    }
+
+    #[test]
+    fn test_print_hunting_table_with_graph_api_response() {
+        // Graph API の runHuntingQuery レスポンス形式（小文字キー）
+        let resp = json!({
+            "schema": [
+                {"name": "DeviceName", "type": "String"},
+                {"name": "ProcessId", "type": "Int64"}
+            ],
+            "results": [
+                {"DeviceName": "host1", "ProcessId": 1234},
+                {"DeviceName": "host2", "ProcessId": 5678}
+            ]
+        });
+        print_hunting_table(&resp);
+    }
+
+    #[test]
+    fn test_print_hunting_table_empty_results() {
+        let resp = json!({
+            "schema": [
+                {"name": "DeviceName", "type": "String"}
+            ],
+            "results": []
+        });
+        print_hunting_table(&resp);
+    }
+
+    #[test]
+    fn test_print_hunting_table_no_schema() {
+        // schema がない場合は JSON をそのまま出力する
+        let resp = json!({"error": "something went wrong"});
+        print_hunting_table(&resp);
+    }
+
+    #[test]
+    fn test_print_hunting_table_empty_schema() {
+        let resp = json!({
+            "schema": [],
+            "results": [{"foo": "bar"}]
+        });
+        print_hunting_table(&resp);
+    }
+
+    #[test]
+    fn test_print_hunting_table_null_value_in_row() {
+        let resp = json!({
+            "schema": [
+                {"name": "DeviceName", "type": "String"},
+                {"name": "Status", "type": "String"}
+            ],
+            "results": [
+                {"DeviceName": "host1", "Status": null}
+            ]
+        });
+        print_hunting_table(&resp);
+    }
+
+    #[test]
+    fn test_print_hunting_table_missing_column_in_row() {
+        let resp = json!({
+            "schema": [
+                {"name": "DeviceName", "type": "String"},
+                {"name": "Missing", "type": "String"}
+            ],
+            "results": [
+                {"DeviceName": "host1"}
+            ]
+        });
+        print_hunting_table(&resp);
     }
 }

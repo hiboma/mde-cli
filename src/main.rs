@@ -189,8 +189,8 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
         Commands::Hunting { command: Some(cmd) } => {
             let client = build_mde_client(
-                "https://api.security.microsoft.com",
-                "https://api.securitycenter.microsoft.com/.default",
+                "https://graph.microsoft.com",
+                "https://graph.microsoft.com/.default",
             )?;
             mde::commands::hunting::handle(&client, cmd, cli.output).await
         }

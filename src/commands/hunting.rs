@@ -19,11 +19,11 @@ async fn run(
     output_format: OutputFormat,
 ) -> Result<(), AppError> {
     let body = serde_json::json!({
-        "Query": args.query,
+        "query": args.query,
     });
 
     let resp: serde_json::Value = client
-        .post("/api/advancedhunting/run", &body)
+        .post("/v1.0/security/runHuntingQuery", &body)
         .await?
         .json()
         .await?;
@@ -40,13 +40,13 @@ async fn run(
 }
 
 fn print_hunting_table(value: &serde_json::Value) {
-    let schema = value.get("Schema").and_then(|s| s.as_array());
-    let results = value.get("Results").and_then(|r| r.as_array());
+    let schema = value.get("schema").and_then(|s| s.as_array());
+    let results = value.get("results").and_then(|r| r.as_array());
 
     let columns: Vec<&str> = match schema {
         Some(s) => s
             .iter()
-            .filter_map(|col| col.get("Name").and_then(|n| n.as_str()))
+            .filter_map(|col| col.get("name").and_then(|n| n.as_str()))
             .collect(),
         None => {
             println!(

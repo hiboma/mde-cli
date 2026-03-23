@@ -5,13 +5,21 @@ use std::process;
 use mde::auth::StaticTokenAuth;
 use mde::auth::oauth2::OAuth2Auth;
 use mde::cli::agent::AgentCommand;
-use mde::cli::{Cli, Commands};
+use mde::cli::{Cli, Commands, ProfileAction};
 use mde::client::MdeClient;
 use mde::config::Config;
 use mde::error::AppError;
+use mde::profile;
 
 fn main() {
     dotenvy::dotenv().ok();
+
+    // If top-level --help/-h is requested, show profile-aware help and exit.
+    if should_show_profile_help() {
+        show_profile_help();
+        return;
+    }
+
     let cli = Cli::parse();
 
     // Handle agent start (fork) before creating tokio runtime.
@@ -81,6 +89,12 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         }
     };
 
+    // Handle profile subcommands.
+    if let Commands::Profile { action } = &command {
+        handle_profile_command(action, cli.profile.as_deref());
+        return Ok(());
+    }
+
     // Handle agent subcommands.
     if let Commands::Agent { command: agent_cmd } = &command {
         return handle_agent_command(agent_cmd).await;
@@ -109,6 +123,21 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         && mde::agent::session::is_session_alive(&session)
     {
         return route_through_agent_from_session(&command, session).await;
+    }
+
+    // Check profile restrictions before dispatching.
+    if let Some(ref active_profile) = profile::resolve(cli.profile.as_deref()) {
+        let cmd_name = command.name().to_string();
+        if !active_profile.is_command_allowed(&cmd_name) {
+            eprintln!(
+                "Error: command '{}' is not allowed by profile '{}'",
+                cmd_name, active_profile.name
+            );
+            eprintln!(
+                "hint: use --profile to switch profiles, or run 'mde-cli profile list' to see available profiles"
+            );
+            process::exit(1);
+        }
     }
 
     let config = Config::load().unwrap_or_default();
@@ -317,6 +346,7 @@ fn requires_agent_routing(command: &Commands) -> bool {
         Commands::Machines { command } => command.is_some(),
         Commands::Auth { command } => command.is_some(),
         Commands::Agent { .. } => false, // agent commands are handled separately
+        Commands::Profile { .. } => false, // profile commands are handled locally
     }
 }
 
@@ -334,7 +364,7 @@ fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
     // Only strip agent-specific flags that the server should not see.
     // Global flags like --output, --raw, --tenant-id are passed through
     // so the agent can honor the requested output format.
-    let strip_flags_with_value = ["--socket", "--token"];
+    let strip_flags_with_value = ["--socket", "--token", "--profile"];
     let strip_flags_bool = ["--no-agent"];
 
     let mut skip_next = false;
@@ -373,4 +403,239 @@ fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
     }
 
     (cmd_name, action, extra_args)
+}
+
+/// Check if top-level --help/-h is requested (not for a subcommand).
+fn should_show_profile_help() -> bool {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "-h" || arg == "--help" {
+            return true;
+        }
+        // If we hit a non-flag argument, it's a subcommand — don't intercept.
+        if !arg.starts_with('-') {
+            return false;
+        }
+        // Skip flags with values.
+        if matches!(
+            arg.as_str(),
+            "--tenant-id" | "--client-id" | "--output" | "--socket" | "--token" | "--profile"
+        ) {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Show profile-aware help text.
+fn show_profile_help() {
+    let args: Vec<String> = std::env::args().collect();
+    let mut cli_profile = None;
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--profile" {
+            if i + 1 < args.len() {
+                cli_profile = Some(args[i + 1].clone());
+            }
+            break;
+        }
+        if args[i].starts_with("--profile=") {
+            cli_profile = Some(args[i].trim_start_matches("--profile=").to_string());
+            break;
+        }
+        i += 1;
+    }
+
+    let active = profile::resolve(cli_profile.as_deref());
+
+    match active {
+        Some(ref ap) if !ap.commands.iter().any(|c| c == "*") => {
+            print_filtered_help(ap);
+        }
+        _ => {
+            // No profile or wildcard: show default help.
+            let mut cmd = Cli::command();
+            let help = cmd.render_help();
+            print!("{}", help);
+        }
+    }
+}
+
+/// Print help text filtered by the active profile.
+fn print_filtered_help(ap: &profile::ActiveProfile) {
+    let version = env!("CARGO_PKG_VERSION");
+    let total = total_command_count();
+    let allowed = ap.commands.len();
+
+    println!("mde-cli {}", version);
+    println!("CLI tool for Microsoft Defender for Endpoint API");
+    println!();
+    println!("Usage: mde-cli [OPTIONS] [COMMAND]");
+    println!();
+
+    // Options section.
+    let cmd = Cli::command();
+    println!("Options:");
+    for arg in cmd.get_arguments() {
+        if arg.is_hide_set() {
+            continue;
+        }
+        let long = arg
+            .get_long()
+            .map(|l| format!("--{}", l))
+            .unwrap_or_default();
+        let short = arg
+            .get_short()
+            .map(|s| format!("-{}, ", s))
+            .unwrap_or_else(|| "    ".to_string());
+        let is_takes_values = arg.get_action().takes_values();
+        let value_name = if !is_takes_values {
+            String::new()
+        } else {
+            arg.get_value_names()
+                .map(|v| {
+                    v.iter()
+                        .map(|n| format!("<{}>", n))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default()
+        };
+        let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
+        if long.is_empty() && value_name.is_empty() {
+            continue;
+        }
+        let flag = if value_name.is_empty() {
+            format!("  {}{}", short, long)
+        } else {
+            format!("  {}{} {}", short, long, value_name)
+        };
+        println!("{:<40} {}", flag, help);
+    }
+    println!();
+
+    // Commands section — group by category, only showing allowed commands.
+    let categories: &[(&str, &[&str])] = &[
+        ("Resources", &["alerts", "incidents", "hunting", "machines"]),
+        ("Authentication", &["auth"]),
+    ];
+
+    println!("Commands:");
+    for (category, cmds) in categories {
+        let filtered: Vec<&&str> = cmds.iter().filter(|c| ap.is_command_allowed(c)).collect();
+        if filtered.is_empty() {
+            continue;
+        }
+        println!();
+        println!("{}:", category);
+        let line = filtered
+            .iter()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("  {}", line);
+    }
+
+    // Always show agent, profile.
+    println!();
+    println!("Agent:");
+    println!("  agent");
+    println!();
+    println!("Configuration:");
+    println!("  profile");
+
+    println!();
+    println!(
+        "Active profile: {} ({}/{} commands)",
+        ap.name, allowed, total,
+    );
+    println!("Version: {}", version);
+}
+
+/// Handle `profile init` and `profile list` subcommands.
+fn handle_profile_command(action: &ProfileAction, cli_profile: Option<&str>) {
+    match action {
+        ProfileAction::Init { global } => {
+            let path = if *global {
+                let home = std::env::var("HOME").unwrap_or_else(|_| {
+                    eprintln!("Error: HOME is not set");
+                    process::exit(1);
+                });
+                let dir = std::path::PathBuf::from(home).join(".config/mde-cli");
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!("Error: failed to create {}: {}", dir.display(), e);
+                    process::exit(1);
+                }
+                dir.join("config.toml")
+            } else {
+                std::path::PathBuf::from(".mde-cli.toml")
+            };
+
+            if path.exists() {
+                eprintln!("Error: {} already exists", path.display());
+                eprintln!("hint: remove or rename the file to re-initialize");
+                process::exit(1);
+            }
+
+            if let Err(e) = std::fs::write(&path, profile::builtin_config_toml()) {
+                eprintln!("Error: failed to write {}: {}", path.display(), e);
+                process::exit(1);
+            }
+            println!("Created {}", path.display());
+        }
+        ProfileAction::List => {
+            let config = profile::load_config();
+            let active = profile::resolve(cli_profile);
+
+            match config {
+                Some(config) if !config.profiles.is_empty() => {
+                    let active_name = active.as_ref().map(|a| a.name.as_str());
+                    for (name, p) in &config.profiles {
+                        let marker = if Some(name.as_str()) == active_name {
+                            " (active)"
+                        } else {
+                            ""
+                        };
+                        let cmd_count = if p.commands.iter().any(|c| c == "*") {
+                            "all".to_string()
+                        } else {
+                            format!("{} commands", p.commands.len())
+                        };
+                        println!("  {}{} - {} [{}]", name, marker, p.description, cmd_count);
+                    }
+                    if let Some(ref ap) = active {
+                        let total = total_command_count();
+                        let allowed = if ap.commands.iter().any(|c| c == "*") {
+                            total
+                        } else {
+                            ap.commands.len()
+                        };
+                        println!(
+                            "\nActive profile: {} - {} ({}/{} commands)",
+                            ap.name, ap.description, allowed, total,
+                        );
+                    }
+                }
+                _ => {
+                    println!("No profiles configured.");
+                    println!("hint: run 'mde-cli profile init' to create a configuration file");
+                }
+            }
+        }
+    }
+}
+
+/// Get the total number of API commands (excluding agent, profile).
+fn total_command_count() -> usize {
+    let cmd = Cli::command();
+    cmd.get_subcommands()
+        .filter(|s| {
+            let name = s.get_name();
+            name != "agent" && name != "profile"
+        })
+        .count()
 }

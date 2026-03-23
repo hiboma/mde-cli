@@ -31,6 +31,9 @@ Authentication:
   auth               Authenticate and manage tokens
   agent              Manage the credential isolation agent
 
+Configuration:
+  profile            Manage command profiles
+
 Other:
   help               Print this message or the help of the given subcommand(s)
 
@@ -67,6 +70,10 @@ pub struct Cli {
     /// Skip agent auto-detection and use direct API mode
     #[arg(long, global = true)]
     pub no_agent: bool,
+
+    /// Profile name to filter available commands (overrides MDE_PROFILE)
+    #[arg(long, env = "MDE_PROFILE", hide_env = true)]
+    pub profile: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -131,6 +138,29 @@ pub enum Commands {
         #[command(subcommand)]
         command: agent::AgentCommand,
     },
+    /// Manage command profiles
+    #[command(
+        subcommand_required = true,
+        arg_required_else_help = true,
+        hide = true,
+        next_help_heading = "Configuration"
+    )]
+    Profile {
+        #[command(subcommand)]
+        action: ProfileAction,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProfileAction {
+    /// Initialize a profile configuration file
+    Init {
+        /// Create in ~/.config/mde-cli/ instead of current directory
+        #[arg(long)]
+        global: bool,
+    },
+    /// List available profiles
+    List,
 }
 
 impl Commands {
@@ -142,6 +172,7 @@ impl Commands {
             Commands::Hunting { .. } => "hunting",
             Commands::Machines { .. } => "machines",
             Commands::Agent { .. } => "agent",
+            Commands::Profile { .. } => "profile",
         }
     }
 }

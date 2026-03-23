@@ -31,7 +31,8 @@ cargo fmt                # Format
 
 - `mde-cli agent start --shared` writes session info to `~/.local/share/mde-cli/session.json`
 - No `eval` needed; any terminal can auto-detect the agent via session file
-- Session leader monitoring is disabled; idle timeout (8h) still applies
+- Session leader monitoring is disabled; no idle timeout
+- Duplicate start is detected via socket connection check ("already started")
 - `--no-agent` flag forces direct API mode, skipping agent auto-detection
 - Priority: `--no-agent` > `MDE_AGENT_TOKEN` env > session.json > direct mode
 

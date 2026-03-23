@@ -9,7 +9,8 @@ use crate::agent::handler::handle_request;
 use crate::agent::protocol::{AgentRequest, AgentResponse};
 use crate::agent::security::{AgentConfig, AuditLog, CommandWhitelist, RateLimiter};
 use crate::agent::{
-    cleanup_files, ensure_socket_dir, pid_file_path, pid_socket_path, write_pid_file,
+    cleanup_files, ensure_socket_dir, list_agent_sockets, pid_file_path, pid_socket_path,
+    read_pid_file, write_pid_file,
 };
 
 /// Maximum request size (1 MiB).
@@ -17,6 +18,30 @@ const MAX_REQUEST_SIZE: usize = 1024 * 1024;
 
 /// Maximum concurrent connections.
 const MAX_CONNECTIONS: usize = 64;
+
+/// Check if an agent is already running.
+/// For eval mode, scan all sockets via `list_agent_sockets()`.
+/// For shared mode, read the socket path from `session.json`.
+async fn check_already_running(shared: bool) -> Option<u32> {
+    if shared {
+        // Shared mode: check session.json for existing agent.
+        if let Some(session) = crate::agent::session::read_session() {
+            let socket_path = PathBuf::from(&session.socket_path);
+            if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
+                return Some(session.pid);
+            }
+        }
+    } else {
+        // Eval mode: scan all sockets in the socket directory.
+        for socket in list_agent_sockets() {
+            if tokio::net::UnixStream::connect(&socket).await.is_ok() {
+                let pid = read_pid_file(&pid_file_path(&socket)).unwrap_or(0);
+                return Some(pid);
+            }
+        }
+    }
+    None
+}
 
 /// Start the agent in foreground mode.
 pub async fn start(
@@ -29,6 +54,12 @@ pub async fn start(
     crate::agent::sanitize_env();
     crate::agent::harden_process();
 
+    // Check if an agent is already running.
+    if let Some(pid) = check_already_running(shared).await {
+        eprintln!("agent: already started (pid {})", pid);
+        return Ok(());
+    }
+
     let config = AgentConfig::load(config_path.as_deref());
 
     // SAFETY: getsid(0) is always safe.
@@ -39,15 +70,6 @@ pub async fn start(
 
     // Clean up stale socket if it exists.
     if socket_path.exists() {
-        // Check if another agent is actually running on this socket.
-        if tokio::net::UnixStream::connect(&socket_path).await.is_ok() {
-            return Err(format!(
-                "Another agent is already running on {}",
-                socket_path.display()
-            )
-            .into());
-        }
-        // Stale socket, remove it.
         std::fs::remove_file(&socket_path)?;
     }
 

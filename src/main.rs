@@ -230,8 +230,7 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
             // Foreground mode (background is handled before tokio runtime).
             debug_assert!(*foreground, "background mode should be handled in main()");
 
-            mde::agent::validate_credentials()
-                .map_err(AppError::Config)?;
+            mde::agent::validate_credentials().map_err(AppError::Config)?;
 
             let session_token = mde::agent::generate_token();
             let socket_path = socket.as_ref().map(PathBuf::from);

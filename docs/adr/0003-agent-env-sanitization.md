@@ -20,7 +20,7 @@ mde-cli の agent プロセスは fork() で生成されるため、親プロセ
 
 ### 制約
 
-- `MDE_CLIENT_SECRET` は `fork()` 前に `Config` 構造体に読み込み済みで、fork 後は環境変数を再参照しません。
+- `MDE_CLIENT_SECRET` を含む MDE 認証情報は、agent が受信したリクエストごとに `dispatch_from_args()` で環境変数から再解決されます。そのため、これらの環境変数はサニタイズで保持する必要があります。
 - agent プロセスは HTTP 通信（reqwest）と Unix ドメインソケット通信を行うため、プロキシ・TLS 関連の環境変数は保持する必要があります。
 - メモリダンプ（root 権限）による漏洩は本 ADR のスコープ外とします。
 
@@ -39,6 +39,7 @@ fork 直後にすべての環境変数をクリアし、以下のホワイトリ
 | TLS | `SSL_CERT_FILE`, `SSL_CERT_DIR` | カスタム CA 証明書 |
 | ロケール | `LANG`, `LC_*` | 文字エンコーディング |
 | デバッグ | `RUST_LOG`, `RUST_BACKTRACE` | ログ出力、パニック時のバックトレース |
+| MDE 認証情報 | `MDE_TENANT_ID`, `MDE_CLIENT_ID`, `MDE_CLIENT_SECRET`, `MDE_ACCESS_TOKEN` | MDE API の認証に必要。agent は受信したリクエストごとに `dispatch_from_args()` で認証情報を解決するため、環境変数を保持する必要がある |
 
 ### プロセス hardening
 

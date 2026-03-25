@@ -146,8 +146,11 @@ const ENV_WHITELIST: &[&str] = &[
     // Debug
     "RUST_LOG",
     "RUST_BACKTRACE",
-    // MDE configuration (non-secret)
+    // MDE configuration
     "MDE_TENANT_ID",
+    "MDE_CLIENT_ID",
+    "MDE_CLIENT_SECRET",
+    "MDE_ACCESS_TOKEN",
 ];
 
 /// Environment variable prefixes allowed to survive sanitization.
@@ -267,9 +270,14 @@ mod env_tests {
     }
 
     #[test]
-    fn test_is_env_whitelisted_rejects_secrets() {
-        assert!(!is_env_whitelisted("MDE_CLIENT_ID"));
-        assert!(!is_env_whitelisted("MDE_CLIENT_SECRET"));
+    fn test_is_env_whitelisted_allows_mde_credentials() {
+        assert!(is_env_whitelisted("MDE_CLIENT_ID"));
+        assert!(is_env_whitelisted("MDE_CLIENT_SECRET"));
+        assert!(is_env_whitelisted("MDE_ACCESS_TOKEN"));
+    }
+
+    #[test]
+    fn test_is_env_whitelisted_rejects_non_mde_secrets() {
         assert!(!is_env_whitelisted("GITHUB_TOKEN"));
         assert!(!is_env_whitelisted("SLACK_BOT_TOKEN"));
         assert!(!is_env_whitelisted("AWS_SECRET_ACCESS_KEY"));

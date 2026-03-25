@@ -146,8 +146,11 @@ const ENV_WHITELIST: &[&str] = &[
     // Debug
     "RUST_LOG",
     "RUST_BACKTRACE",
-    // MDE configuration (non-secret)
+    // MDE configuration
     "MDE_TENANT_ID",
+    "MDE_CLIENT_ID",
+    "MDE_CLIENT_SECRET",
+    "MDE_ACCESS_TOKEN",
 ];
 
 /// Environment variable prefixes allowed to survive sanitization.
@@ -245,6 +248,40 @@ pub fn harden_process() {
     }
 }
 
+/// Validate that required MDE credentials are available before starting the agent.
+/// Checks environment variables and config.toml. Returns an error message listing
+/// any missing credentials.
+pub fn validate_credentials() -> Result<(), String> {
+    let config = crate::config::Config::load().unwrap_or_default();
+    let has_access_token = std::env::var("MDE_ACCESS_TOKEN").is_ok();
+
+    // If MDE_ACCESS_TOKEN is set, tenant_id/client_id/client_secret are not required.
+    if has_access_token {
+        return Ok(());
+    }
+
+    let mut missing = Vec::new();
+
+    if std::env::var("MDE_TENANT_ID").is_err() && config.auth.tenant_id.is_none() {
+        missing.push("MDE_TENANT_ID");
+    }
+    if std::env::var("MDE_CLIENT_ID").is_err() && config.auth.client_id.is_none() {
+        missing.push("MDE_CLIENT_ID");
+    }
+    if std::env::var("MDE_CLIENT_SECRET").is_err() && config.auth.client_secret.is_none() {
+        missing.push("MDE_CLIENT_SECRET");
+    }
+
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "missing required credentials: {}. Set via environment variables or config.toml.",
+            missing.join(", ")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod env_tests {
     use super::*;
@@ -267,9 +304,14 @@ mod env_tests {
     }
 
     #[test]
-    fn test_is_env_whitelisted_rejects_secrets() {
-        assert!(!is_env_whitelisted("MDE_CLIENT_ID"));
-        assert!(!is_env_whitelisted("MDE_CLIENT_SECRET"));
+    fn test_is_env_whitelisted_allows_mde_credentials() {
+        assert!(is_env_whitelisted("MDE_CLIENT_ID"));
+        assert!(is_env_whitelisted("MDE_CLIENT_SECRET"));
+        assert!(is_env_whitelisted("MDE_ACCESS_TOKEN"));
+    }
+
+    #[test]
+    fn test_is_env_whitelisted_rejects_non_mde_secrets() {
         assert!(!is_env_whitelisted("GITHUB_TOKEN"));
         assert!(!is_env_whitelisted("SLACK_BOT_TOKEN"));
         assert!(!is_env_whitelisted("AWS_SECRET_ACCESS_KEY"));

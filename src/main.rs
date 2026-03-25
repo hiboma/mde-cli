@@ -32,6 +32,11 @@ fn main() {
         let config_path = config.as_ref().map(PathBuf::from);
         let shared = *shared;
 
+        if let Err(e) = mde::agent::validate_credentials() {
+            eprintln!("Error: {}", e);
+            process::exit(1);
+        }
+
         if let Err(e) = mde::agent::ensure_socket_dir() {
             eprintln!("Error: failed to create socket directory: {}", e);
             process::exit(1);
@@ -224,6 +229,8 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
         } => {
             // Foreground mode (background is handled before tokio runtime).
             debug_assert!(*foreground, "background mode should be handled in main()");
+
+            mde::agent::validate_credentials().map_err(AppError::Config)?;
 
             let session_token = mde::agent::generate_token();
             let socket_path = socket.as_ref().map(PathBuf::from);

@@ -49,7 +49,13 @@ pub struct Cli {
     pub client_id: Option<String>,
 
     /// Output format
-    #[arg(long, env = "MDE_OUTPUT_FORMAT", global = true, default_value = "json", hide = true)]
+    #[arg(
+        long,
+        env = "MDE_OUTPUT_FORMAT",
+        global = true,
+        default_value = "json",
+        hide = true
+    )]
     pub output: OutputFormat,
 
     /// Output raw API response without extracting data

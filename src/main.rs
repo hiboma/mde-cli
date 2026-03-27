@@ -40,6 +40,15 @@ fn main() {
             process::exit(1);
         }
 
+        // Check if an agent is already running before fork.
+        if let Some(session) = mde::agent::session::read_session() {
+            let socket = std::path::Path::new(&session.socket_path);
+            if std::os::unix::net::UnixStream::connect(socket).is_ok() {
+                eprintln!("agent: already started (pid {})", session.pid);
+                process::exit(0);
+            }
+        }
+
         // Clear MDE credentials from environment before fork.
         // The child process will use the MdeCredentials struct instead.
         // SAFETY: Single-threaded context (before tokio runtime creation).

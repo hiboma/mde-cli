@@ -250,8 +250,20 @@ graph_base_url = "https://graph.microsoft.com"
         assert!(err.contains("MDE_CLIENT_SECRET"));
     }
 
+    /// Helper to ensure MDE_* env vars are cleared before tests that call resolve().
+    /// Tests run in parallel, so env var mutations in one test can leak into another.
+    unsafe fn clear_mde_env() {
+        unsafe {
+            std::env::remove_var("MDE_TENANT_ID");
+            std::env::remove_var("MDE_CLIENT_ID");
+            std::env::remove_var("MDE_CLIENT_SECRET");
+            std::env::remove_var("MDE_ACCESS_TOKEN");
+        }
+    }
+
     #[test]
     fn test_mde_credentials_resolve_cli_overrides_config() {
+        unsafe { clear_mde_env() };
         let config = Config {
             auth: AuthConfig {
                 tenant_id: Some("config-tenant".to_string()),
@@ -269,6 +281,7 @@ graph_base_url = "https://graph.microsoft.com"
 
     #[test]
     fn test_mde_credentials_resolve_config_fallback() {
+        unsafe { clear_mde_env() };
         let config = Config {
             auth: AuthConfig {
                 tenant_id: Some("config-tenant".to_string()),
@@ -285,6 +298,7 @@ graph_base_url = "https://graph.microsoft.com"
 
     #[test]
     fn test_mde_credentials_resolve_empty() {
+        unsafe { clear_mde_env() };
         let config = Config::default();
         let creds = MdeCredentials::resolve(None, None, &config);
         assert!(creds.tenant_id.is_none());
@@ -302,12 +316,6 @@ graph_base_url = "https://graph.microsoft.com"
             std::env::set_var("MDE_CLIENT_SECRET", "test-secret");
             std::env::set_var("MDE_ACCESS_TOKEN", "test-token");
         }
-
-        // Verify they are set
-        assert!(std::env::var("MDE_TENANT_ID").is_ok());
-        assert!(std::env::var("MDE_CLIENT_ID").is_ok());
-        assert!(std::env::var("MDE_CLIENT_SECRET").is_ok());
-        assert!(std::env::var("MDE_ACCESS_TOKEN").is_ok());
 
         // Clear them
         unsafe {

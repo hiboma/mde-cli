@@ -34,9 +34,7 @@ fn mde_cmd(tmpdir: &Path, xdg_data_home: &Path) -> Command {
 
 /// Wait for the session file to appear (agent needs a moment to fork and write it).
 fn wait_for_session_file(xdg_data_home: &Path) -> std::path::PathBuf {
-    let session_file = xdg_data_home
-        .join("mde-cli")
-        .join("session.debug.json");
+    let session_file = xdg_data_home.join("mde-cli").join("session.debug.json");
     for _ in 0..50 {
         if session_file.exists() {
             return session_file;

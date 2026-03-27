@@ -16,11 +16,8 @@ fn main() {
 
     // Load config and resolve credentials early (before fork).
     let config = Config::load().unwrap_or_default();
-    let credentials = MdeCredentials::resolve(
-        cli.tenant_id.as_deref(),
-        cli.client_id.as_deref(),
-        &config,
-    );
+    let credentials =
+        MdeCredentials::resolve(cli.tenant_id.as_deref(), cli.client_id.as_deref(), &config);
 
     // Handle agent start (fork) before creating tokio runtime.
     // fork() is unsafe in multi-threaded processes, so we must do it here.
@@ -136,8 +133,13 @@ async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
         let cid = credentials.client_id.as_deref().ok_or_else(|| {
             AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
         })?;
-        return mde::commands::auth::handle(auth_cmd, tid, cid, credentials.client_secret.as_deref())
-            .await;
+        return mde::commands::auth::handle(
+            auth_cmd,
+            tid,
+            cid,
+            credentials.client_secret.as_deref(),
+        )
+        .await;
     }
 
     // For API commands, build client with appropriate auth
@@ -237,9 +239,14 @@ async fn handle_agent_command(
             let pid = std::process::id();
             let actual_socket = socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
 
-            mde::agent::server::start(Some(actual_socket), config_path, &session_token, credentials)
-                .await
-                .map_err(|e| AppError::Config(format!("agent error: {}", e)))?;
+            mde::agent::server::start(
+                Some(actual_socket),
+                config_path,
+                &session_token,
+                credentials,
+            )
+            .await
+            .map_err(|e| AppError::Config(format!("agent error: {}", e)))?;
 
             Ok(())
         }

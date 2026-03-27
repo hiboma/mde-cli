@@ -369,9 +369,15 @@ async fn handle_connection(
         }
     };
 
-    let response =
-        handle_request(request, session_token, whitelist, rate_limiter, audit_log, credentials)
-            .await;
+    let response = handle_request(
+        request,
+        session_token,
+        whitelist,
+        rate_limiter,
+        audit_log,
+        credentials,
+    )
+    .await;
 
     writer
         .write_all(response.to_json_line()?.as_bytes())

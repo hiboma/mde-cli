@@ -77,7 +77,10 @@ impl MdeCredentials {
     }
 
     /// Remove MDE credential environment variables from the current process.
-    /// Call this after resolving credentials to prevent leaking them to child processes.
+    /// First overwrites the values in-place (via the C `environ` pointer) so that
+    /// the kernel's process environment snapshot — visible through `ps -E` or
+    /// `/proc/<pid>/environ` — no longer contains the real secrets.
+    /// Then calls `remove_var` to fully unset each variable.
     ///
     /// # Safety
     /// Must be called in a single-threaded context (before tokio runtime creation).
@@ -89,9 +92,56 @@ impl MdeCredentials {
             "MDE_ACCESS_TOKEN",
         ] {
             // SAFETY: Caller guarantees single-threaded context.
+            // Overwrite the value in the C environ array before removing,
+            // so the kernel snapshot no longer contains the real value.
             unsafe {
+                overwrite_environ_value(key);
                 std::env::remove_var(key);
             }
+        }
+    }
+}
+
+/// Overwrite the value portion of an environment variable in-place with `*`.
+/// This mutates the C `environ` array directly so that the kernel's snapshot
+/// (read by `ps -E` / `/proc/<pid>/environ`) is scrubbed.
+///
+/// # Safety
+/// Must be called in a single-threaded context. The `environ` pointer and its
+/// strings must not be concurrently accessed.
+unsafe fn overwrite_environ_value(name: &str) {
+    unsafe extern "C" {
+        static mut environ: *mut *mut libc::c_char;
+    }
+
+    unsafe {
+        if environ.is_null() {
+            return;
+        }
+
+        let name_bytes = name.as_bytes();
+        let mut ep = environ;
+        while !(*ep).is_null() {
+            let entry = *ep;
+            // Check if entry starts with "NAME="
+            let mut matches = true;
+            for (i, &b) in name_bytes.iter().enumerate() {
+                if *entry.add(i) as u8 != b {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches && *entry.add(name_bytes.len()) == b'=' as libc::c_char {
+                // Overwrite the value portion with '*'
+                let val_start = entry.add(name_bytes.len() + 1);
+                let mut p = val_start;
+                while *p != 0 {
+                    *p = b'*' as libc::c_char;
+                    p = p.add(1);
+                }
+                return;
+            }
+            ep = ep.add(1);
         }
     }
 }

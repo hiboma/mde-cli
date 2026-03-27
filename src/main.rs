@@ -7,12 +7,20 @@ use mde::auth::oauth2::OAuth2Auth;
 use mde::cli::agent::AgentCommand;
 use mde::cli::{Cli, Commands};
 use mde::client::MdeClient;
-use mde::config::Config;
+use mde::config::{Config, MdeCredentials};
 use mde::error::AppError;
 
 fn main() {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
+
+    // Load config and resolve credentials early (before fork).
+    let config = Config::load().unwrap_or_default();
+    let credentials = MdeCredentials::resolve(
+        cli.tenant_id.as_deref(),
+        cli.client_id.as_deref(),
+        &config,
+    );
 
     // Handle agent start (fork) before creating tokio runtime.
     // fork() is unsafe in multi-threaded processes, so we must do it here.
@@ -20,21 +28,26 @@ fn main() {
         command:
             AgentCommand::Start {
                 socket,
-                config,
+                config: agent_config,
                 foreground,
-                shared,
             },
     }) = &cli.command
         && !foreground
     {
         let session_token = mde::agent::generate_token();
         let socket_path = socket.as_ref().map(PathBuf::from);
-        let config_path = config.as_ref().map(PathBuf::from);
-        let shared = *shared;
+        let config_path = agent_config.as_ref().map(PathBuf::from);
 
-        if let Err(e) = mde::agent::validate_credentials() {
+        if let Err(e) = mde::agent::validate_credentials(&credentials) {
             eprintln!("Error: {}", e);
             process::exit(1);
+        }
+
+        // Clear MDE credentials from environment before fork.
+        // The child process will use the MdeCredentials struct instead.
+        // SAFETY: Single-threaded context (before tokio runtime creation).
+        unsafe {
+            MdeCredentials::clear_env();
         }
 
         if let Err(e) = mde::agent::ensure_socket_dir() {
@@ -46,18 +59,14 @@ fn main() {
             socket_path,
             config_path,
             session_token.clone(),
-            shared,
+            credentials,
         ) {
-            Ok((child_pid, socket_path)) => {
-                if shared {
-                    eprintln!("agent started in shared mode, pid {}", child_pid);
-                    eprintln!(
-                        "session file: {}",
-                        mde::agent::session::session_file_path().display()
-                    );
-                } else {
-                    mde::agent::server::print_shell_vars(&socket_path, &session_token, child_pid);
-                }
+            Ok((child_pid, _socket_path)) => {
+                eprintln!("agent started, pid {}", child_pid);
+                eprintln!(
+                    "session file: {}",
+                    mde::agent::session::session_file_path().display()
+                );
                 process::exit(0);
             }
             Err(e) => {
@@ -70,14 +79,14 @@ fn main() {
     // Create tokio runtime for all other operations.
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        if let Err(e) = run(cli).await {
+        if let Err(e) = run(cli, credentials).await {
             eprintln!("Error: {}", e);
             process::exit(e.exit_code());
         }
     });
 }
 
-async fn run(cli: Cli) -> Result<(), AppError> {
+async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
     let command = match cli.command {
         Some(command) => command,
         None => {
@@ -88,7 +97,7 @@ async fn run(cli: Cli) -> Result<(), AppError> {
 
     // Handle agent subcommands.
     if let Commands::Agent { command: agent_cmd } = &command {
-        return handle_agent_command(agent_cmd).await;
+        return handle_agent_command(agent_cmd, credentials).await;
     }
 
     // Check if we should route through the agent.
@@ -116,57 +125,35 @@ async fn run(cli: Cli) -> Result<(), AppError> {
         return route_through_agent_from_session(&command, session).await;
     }
 
-    let config = Config::load().unwrap_or_default();
-
-    let tenant_id = cli
-        .tenant_id
-        .as_deref()
-        .map(String::from)
-        .or_else(|| std::env::var("MDE_TENANT_ID").ok())
-        .or_else(|| config.auth.tenant_id.clone());
-
-    let client_id = cli
-        .client_id
-        .as_deref()
-        .map(String::from)
-        .or_else(|| std::env::var("MDE_CLIENT_ID").ok())
-        .or_else(|| config.auth.client_id.clone());
-
-    let client_secret = std::env::var("MDE_CLIENT_SECRET")
-        .ok()
-        .or_else(|| config.auth.client_secret.clone());
-
-    let access_token = std::env::var("MDE_ACCESS_TOKEN").ok();
-
     // Auth commands only need tenant_id and client_id
     if let Commands::Auth {
         command: Some(ref auth_cmd),
     } = command
     {
-        let tid = tenant_id.as_deref().ok_or_else(|| {
+        let tid = credentials.tenant_id.as_deref().ok_or_else(|| {
             AppError::Config("tenant_id not set. Use --tenant-id or MDE_TENANT_ID.".to_string())
         })?;
-        let cid = client_id.as_deref().ok_or_else(|| {
+        let cid = credentials.client_id.as_deref().ok_or_else(|| {
             AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
         })?;
-        return mde::commands::auth::handle(auth_cmd, tid, cid, client_secret.as_deref()).await;
+        return mde::commands::auth::handle(auth_cmd, tid, cid, credentials.client_secret.as_deref())
+            .await;
     }
 
     // For API commands, build client with appropriate auth
     let build_mde_client = |base_url: &str, scope: &str| -> Result<MdeClient, AppError> {
-        // If access_token is provided via MDE_ACCESS_TOKEN env var, use it
-        if let Some(ref token) = access_token {
+        if let Some(ref token) = credentials.access_token {
             let auth = StaticTokenAuth(token.clone());
             return MdeClient::new(base_url.to_string(), Box::new(auth));
         }
 
-        let tid = tenant_id.as_ref().ok_or_else(|| {
+        let tid = credentials.tenant_id.as_ref().ok_or_else(|| {
             AppError::Config("tenant_id not set. Use --tenant-id or MDE_TENANT_ID.".to_string())
         })?;
-        let cid = client_id.as_ref().ok_or_else(|| {
+        let cid = credentials.client_id.as_ref().ok_or_else(|| {
             AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
         })?;
-        let cs = client_secret.as_ref().ok_or_else(|| {
+        let cs = credentials.client_secret.as_ref().ok_or_else(|| {
             AppError::Config(
                 "client_secret not set. Set MDE_CLIENT_SECRET env var or config.toml [auth].client_secret."
                     .to_string(),
@@ -219,18 +206,26 @@ async fn run(cli: Cli) -> Result<(), AppError> {
 }
 
 /// Handle agent subcommands (start foreground, stop, status).
-async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
+async fn handle_agent_command(
+    cmd: &AgentCommand,
+    credentials: MdeCredentials,
+) -> Result<(), AppError> {
     match cmd {
         AgentCommand::Start {
             socket,
             config,
             foreground,
-            shared,
         } => {
             // Foreground mode (background is handled before tokio runtime).
             debug_assert!(*foreground, "background mode should be handled in main()");
 
-            mde::agent::validate_credentials().map_err(AppError::Config)?;
+            mde::agent::validate_credentials(&credentials).map_err(AppError::Config)?;
+
+            // Clear MDE credentials from environment in foreground mode too.
+            // SAFETY: Called before agent server starts processing requests.
+            unsafe {
+                MdeCredentials::clear_env();
+            }
 
             let session_token = mde::agent::generate_token();
             let socket_path = socket.as_ref().map(PathBuf::from);
@@ -242,11 +237,7 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
             let pid = std::process::id();
             let actual_socket = socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
 
-            if !*shared {
-                mde::agent::server::print_shell_vars(&actual_socket, &session_token, pid);
-            }
-
-            mde::agent::server::start(Some(actual_socket), config_path, &session_token, *shared)
+            mde::agent::server::start(Some(actual_socket), config_path, &session_token, credentials)
                 .await
                 .map_err(|e| AppError::Config(format!("agent error: {}", e)))?;
 
@@ -265,16 +256,8 @@ async fn handle_agent_command(cmd: &AgentCommand) -> Result<(), AppError> {
             println!("{}", msg);
             Ok(())
         }
-        AgentCommand::Status { socket, shared } => {
-            let msg = if *shared {
-                mde::agent::client::status_shared().await?
-            } else {
-                let socket_path = socket
-                    .as_ref()
-                    .map(PathBuf::from)
-                    .unwrap_or_else(mde::agent::resolve_socket_path);
-                mde::agent::client::status(&socket_path).await?
-            };
+        AgentCommand::Status => {
+            let msg = mde::agent::client::status().await?;
             println!("{}", msg);
             Ok(())
         }

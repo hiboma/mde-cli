@@ -64,22 +64,8 @@ pub async fn send_command(
     }
 }
 
-/// Check agent status.
-pub async fn status(socket_path: &Path) -> Result<String, AppError> {
-    match UnixStream::connect(socket_path).await {
-        Ok(_) => Ok(format!(
-            "Agent is running (socket: {})",
-            socket_path.display()
-        )),
-        Err(_) => Ok(format!(
-            "Agent is not running (socket: {})",
-            socket_path.display()
-        )),
-    }
-}
-
-/// Check the status of the shared agent via session.json.
-pub async fn status_shared() -> Result<String, AppError> {
+/// Check the agent status via session.json.
+pub async fn status() -> Result<String, AppError> {
     let session_path = crate::agent::session::session_file_path();
     match crate::agent::session::read_session() {
         Some(session) => {
@@ -89,7 +75,6 @@ pub async fn status_shared() -> Result<String, AppError> {
                 "running": running,
                 "pid": session.pid,
                 "socket_path": session.socket_path,
-                "shared": true,
                 "session_file": session_path.display().to_string(),
             });
             Ok(serde_json::to_string_pretty(&status)
@@ -98,7 +83,6 @@ pub async fn status_shared() -> Result<String, AppError> {
         None => {
             let status = serde_json::json!({
                 "running": false,
-                "shared": true,
                 "session_file": session_path.display().to_string(),
             });
             Ok(serde_json::to_string_pretty(&status)

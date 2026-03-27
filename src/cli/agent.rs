@@ -16,10 +16,6 @@ pub enum AgentCommand {
         /// Run in foreground (do not daemonize)
         #[arg(long)]
         foreground: bool,
-
-        /// Share the agent across terminals via session file (no eval needed)
-        #[arg(long)]
-        shared: bool,
     },
 
     /// Stop the agent process
@@ -34,12 +30,5 @@ pub enum AgentCommand {
     },
 
     /// Show agent status
-    Status {
-        /// Custom socket path
-        #[arg(long)]
-        socket: Option<String>,
-        /// Show status from shared session file instead of socket
-        #[arg(long)]
-        shared: bool,
-    },
+    Status,
 }

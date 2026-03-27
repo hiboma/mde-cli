@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// Session information persisted to disk for shared mode.
+/// Session information persisted to disk for cross-terminal auto-detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub socket_path: String,

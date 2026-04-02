@@ -364,14 +364,20 @@ client_secret = "toml-secret"
 
     /// Helper to isolate resolve() from the user's real credentials.toml.
     /// Points XDG_CONFIG_HOME to an empty temp dir so no file is found.
+    /// Also sets HOME to the same temp dir to prevent fallback to ~/.config/mde/.
     fn with_isolated_credentials<F: FnOnce()>(f: F) {
         let tmp = tempfile::tempdir().unwrap();
+        let orig_home = std::env::var("HOME").ok();
         unsafe {
             std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+            std::env::set_var("HOME", tmp.path());
         }
         f();
         unsafe {
             std::env::remove_var("XDG_CONFIG_HOME");
+            if let Some(h) = orig_home {
+                std::env::set_var("HOME", h);
+            }
         }
     }
 
@@ -409,6 +415,68 @@ client_secret = "toml-secret"
         assert!(std::env::var("MDE_CLIENT_ID").is_err());
         assert!(std::env::var("MDE_CLIENT_SECRET").is_err());
         assert!(std::env::var("MDE_ACCESS_TOKEN").is_err());
+    }
+
+    /// Helper to create an isolated credentials.toml for testing resolve().
+    /// Writes the given TOML content to $XDG_CONFIG_HOME/mde/credentials.toml
+    /// and calls f() with the environment isolated.
+    fn with_credentials_file<F: FnOnce()>(toml_content: &str, f: F) {
+        let tmp = tempfile::tempdir().unwrap();
+        let creds_dir = tmp.path().join("mde");
+        std::fs::create_dir_all(&creds_dir).unwrap();
+        std::fs::write(creds_dir.join("credentials.toml"), toml_content).unwrap();
+        let orig_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+            std::env::set_var("HOME", tmp.path());
+        }
+        f();
+        unsafe {
+            std::env::remove_var("XDG_CONFIG_HOME");
+            if let Some(h) = orig_home {
+                std::env::set_var("HOME", h);
+            }
+        }
+    }
+
+    #[test]
+    fn test_mde_credentials_resolve_credentials_file_fallback() {
+        unsafe { clear_mde_env() };
+        let toml_content = r#"
+[credentials]
+tenant_id = "file-tenant"
+client_id = "file-client"
+client_secret = "file-secret"
+mde_base_url = "https://custom.api.example.com"
+graph_base_url = "https://custom.graph.example.com"
+"#;
+        with_credentials_file(toml_content, || {
+            let creds = MdeCredentials::resolve(None, None);
+            assert_eq!(creds.tenant_id.as_deref(), Some("file-tenant"));
+            assert_eq!(creds.client_id.as_deref(), Some("file-client"));
+            assert_eq!(creds.client_secret.as_deref(), Some("file-secret"));
+            assert_eq!(creds.mde_base_url, "https://custom.api.example.com");
+            assert_eq!(creds.graph_base_url, "https://custom.graph.example.com");
+        });
+    }
+
+    #[test]
+    fn test_mde_credentials_resolve_cli_overrides_credentials_file() {
+        unsafe { clear_mde_env() };
+        let toml_content = r#"
+[credentials]
+tenant_id = "file-tenant"
+client_id = "file-client"
+client_secret = "file-secret"
+"#;
+        with_credentials_file(toml_content, || {
+            let creds = MdeCredentials::resolve(Some("cli-tenant"), Some("cli-client"));
+            // CLI args override credentials.toml
+            assert_eq!(creds.tenant_id.as_deref(), Some("cli-tenant"));
+            assert_eq!(creds.client_id.as_deref(), Some("cli-client"));
+            // client_secret has no CLI arg, falls through to credentials.toml
+            assert_eq!(creds.client_secret.as_deref(), Some("file-secret"));
+        });
     }
 
     #[test]

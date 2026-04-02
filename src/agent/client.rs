@@ -91,25 +91,38 @@ pub async fn status() -> Result<String, AppError> {
     }
 }
 
-/// Stop the agent using session.json to find the socket path.
+/// Stop the agent using session.json to find the socket path and PID.
 pub fn stop_from_session() -> Result<String, AppError> {
     let session = crate::agent::session::read_session().ok_or_else(|| {
         AppError::Config("agent is not running (no session file found)".to_string())
     })?;
     let socket_path = std::path::PathBuf::from(&session.socket_path);
-    stop(&socket_path)
+    stop_with_pid(&socket_path, session.pid)
 }
 
 /// Stop the agent by sending SIGTERM.
+/// Resolves PID from the PID file associated with the given socket path.
 pub fn stop(socket_path: &Path) -> Result<String, AppError> {
     let pid_file = crate::agent::pid_file_path(socket_path);
-    let Some(pid) = crate::agent::read_pid_file(&pid_file) else {
-        return Err(AppError::Config(format!(
-            "No PID file found for {}",
-            socket_path.display()
-        )));
-    };
+    let pid = crate::agent::read_pid_file(&pid_file)
+        .or_else(|| {
+            // Fall back to session.json if PID file is missing.
+            let session = crate::agent::session::read_session()?;
+            if session.socket_path == socket_path.display().to_string() {
+                Some(session.pid)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            AppError::Config(format!("No PID file found for {}", socket_path.display()))
+        })?;
 
+    stop_with_pid(socket_path, pid)
+}
+
+/// Stop the agent by sending SIGTERM to the given PID.
+fn stop_with_pid(socket_path: &Path, pid: u32) -> Result<String, AppError> {
     // SAFETY: kill() with SIGTERM is safe when targeting a known PID.
     let ret = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     if ret == 0 {

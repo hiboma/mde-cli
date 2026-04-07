@@ -39,7 +39,7 @@ The binary will be at `target/release/mde-cli`.
 | `MDE_CLIENT_ID` | Azure AD application (client) ID |
 | `MDE_CLIENT_SECRET` | Azure AD client secret |
 | `MDE_ACCESS_TOKEN` | Pre-obtained access token (skips OAuth2 flow) |
-| `MDE_OUTPUT_FORMAT` | Output format: `json` (default) or `table` |
+| `MDE_OUTPUT_FORMAT` | Output format: `json` (default), `json-minify`, or `table` |
 
 ### Config File
 
@@ -87,19 +87,19 @@ export MDE_CLIENT_SECRET="your-secret"
 
 ```bash
 mde-cli alerts list
-mde-cli alerts get --id <alert-id>
-mde-cli alerts update --id <alert-id> --status resolved
-mde-cli alerts files --id <alert-id>
-mde-cli alerts ips --id <alert-id>
-mde-cli alerts domains --id <alert-id>
+mde-cli alerts get <alert-id>
+mde-cli alerts update <alert-id> --status resolved
+mde-cli alerts files <alert-id>
+mde-cli alerts ips <alert-id>
+mde-cli alerts domains <alert-id>
 ```
 
 ### Incidents
 
 ```bash
 mde-cli incidents list
-mde-cli incidents get --id <incident-id>
-mde-cli incidents update --id <incident-id> --status resolved
+mde-cli incidents get <incident-id>
+mde-cli incidents update <incident-id> --status resolved
 ```
 
 ### Advanced Hunting
@@ -112,9 +112,9 @@ mde-cli hunting run --query "DeviceProcessEvents | take 10"
 
 ```bash
 mde-cli machines list
-mde-cli machines get --id <machine-id>
-mde-cli machines timeline --id <machine-id>
-mde-cli machines logon-users --id <machine-id>
+mde-cli machines get <machine-id>
+mde-cli machines timeline <machine-id>
+mde-cli machines logon-users <machine-id>
 ```
 
 ### Agent Mode (Credential Isolation)

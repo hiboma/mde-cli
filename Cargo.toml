@@ -4,7 +4,7 @@ version = "0.8.0"
 edition = "2024"
 description = "CLI tool for Microsoft Defender for Endpoint API"
 license = "MIT"
-repository = "https://github.com/hiboma/microsoft-defender-for-endpoint-cli"
+repository = "https://github.com/hiboma/mde-cli"
 
 [[bin]]
 name = "mde-cli"

@@ -9,7 +9,7 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 - **Advanced Hunting** - Run KQL queries against the advanced hunting API
 - **Machines** - List, get machine details, view timelines and logon users
 - **Agent Mode** - Credential isolation for use with LLM agents (ssh-agent pattern)
-- **OAuth2 Authentication** - Device code flow and client credentials
+- **OAuth2 Authentication** - Browser login (Authorization Code Flow with PKCE) and client credentials
 
 ## Installation
 
@@ -22,8 +22,8 @@ cargo install --path .
 ### Build from source
 
 ```bash
-git clone https://github.com/hiboma/microsoft-defender-for-endpoint-cli.git
-cd microsoft-defender-for-endpoint-cli
+git clone https://github.com/hiboma/mde-cli.git
+cd mde-cli
 cargo build --release
 ```
 
@@ -43,10 +43,10 @@ The binary will be at `target/release/mde-cli`.
 
 ### Config File
 
-You can also set credentials in `~/.config/mde/config.toml`:
+You can also set credentials in `~/.config/mde/credentials.toml`:
 
 ```toml
-[auth]
+[credentials]
 tenant_id = "your-tenant-id"
 client_id = "your-client-id"
 client_secret = "your-client-secret"
@@ -71,8 +71,11 @@ client_secret = "your-client-secret"
 ### Authentication
 
 ```bash
-# Device code flow (interactive)
-mde-cli auth device-code
+# Browser login (Authorization Code Flow with PKCE)
+mde-cli auth login
+
+# Show token for client_credentials flow (CI use)
+mde-cli auth token
 
 # Client credentials (non-interactive)
 export MDE_TENANT_ID="your-tenant-id"
@@ -96,6 +99,7 @@ mde-cli alerts domains --id <alert-id>
 ```bash
 mde-cli incidents list
 mde-cli incidents get --id <incident-id>
+mde-cli incidents update --id <incident-id> --status resolved
 ```
 
 ### Advanced Hunting
@@ -138,6 +142,9 @@ See [ADR-0001](docs/adr/0001-agent-mode-for-credential-isolation.md) for the des
 ```bash
 # JSON output (default)
 mde-cli alerts list --output json
+
+# Minified JSON output
+mde-cli alerts list --output json-minify
 
 # Table output
 mde-cli alerts list --output table

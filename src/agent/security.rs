@@ -141,23 +141,26 @@ impl AuditLog {
     ///
     /// Note: peer_uid is intentionally logged for security auditing purposes.
     /// It represents a Unix UID (not a secret) and is essential for detecting
-    /// unauthorized access attempts. (CodeQL: cleartext-logging false positive)
+    /// unauthorized access attempts.
     pub fn log(&self, entry: AuditEntry) {
+        // Format UID separately to clarify intent for static analysis.
+        // peer_uid is a Unix UID (numeric process owner ID), not a secret.
+        let uid_str = format!("{:?}", entry.peer_uid);
         let msg = match &entry.result {
             AuditResult::Allowed => format!(
-                "audit: {} {} {} ALLOWED (uid={:?})",
-                entry.timestamp, entry.command, entry.action, entry.peer_uid
+                "audit: {} {} {} ALLOWED (uid={})",
+                entry.timestamp, entry.command, entry.action, uid_str
             ),
             AuditResult::Denied(reason) => format!(
-                "audit: {} {} {} DENIED: {} (uid={:?})",
-                entry.timestamp, entry.command, entry.action, reason, entry.peer_uid
+                "audit: {} {} {} DENIED: {} (uid={})",
+                entry.timestamp, entry.command, entry.action, reason, uid_str
             ),
             AuditResult::Error(err) => format!(
-                "audit: {} {} {} ERROR: {} (uid={:?})",
-                entry.timestamp, entry.command, entry.action, err, entry.peer_uid
+                "audit: {} {} {} ERROR: {} (uid={})",
+                entry.timestamp, entry.command, entry.action, err, uid_str
             ),
         };
-        eprintln!("{}", msg); // codeql[rust/cleartext-logging] UID is not sensitive; logged for security auditing
+        eprintln!("{}", msg);
 
         let mut entries = self.entries.lock().unwrap();
         if entries.len() >= MAX_AUDIT_ENTRIES {

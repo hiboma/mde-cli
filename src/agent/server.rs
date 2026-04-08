@@ -319,7 +319,6 @@ async fn handle_connection(
         match get_peer_uid(&stream) {
             Ok(uid) => {
                 if !verify_peer_uid(uid) {
-                    // codeql[rust/cleartext-logging] UID is not sensitive; logged for security auditing
                     eprintln!("agent: rejected connection from UID {}", uid);
                     return Ok(());
                 }

@@ -195,7 +195,6 @@ fn print_logon_users_table(value: &serde_json::Value) {
                 .and_then(|l| l.as_str())
                 .unwrap_or("-");
 
-            // codeql[rust/cleartext-logging] This is CLI table output, not logging sensitive data
             println!(
                 "{:<30} {:<30} {:<24} {:<12}",
                 truncate(account, 28),

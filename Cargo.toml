@@ -18,6 +18,7 @@ path = "src/lib.rs"
 arboard = "3"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 dirs = "6"
 dotenvy = "0.15"
 gag = "1"

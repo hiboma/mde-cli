@@ -24,7 +24,7 @@ dotenvy = "0.15"
 gag = "1"
 libc = "0.2"
 open = "5"
-rand = "0.9"
+rand = "0.9.3"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 rpassword = "7"
 serde = { version = "1", features = ["derive"] }

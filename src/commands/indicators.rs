@@ -1,6 +1,7 @@
 use crate::cli::indicators::IndicatorsCommand;
 use crate::client::MdeClient;
 use crate::error::AppError;
+use crate::models::alert::Severity;
 use crate::models::indicator::{IndicatorAction, IndicatorType};
 use crate::output::OutputFormat;
 
@@ -125,7 +126,9 @@ async fn create(
     }
 
     if let Some(ref severity) = args.severity {
-        body["severity"] = serde_json::json!(severity);
+        let s = Severity::from_str_loose(severity)
+            .ok_or_else(|| AppError::InvalidInput(format!("unknown severity: {}", severity)))?;
+        body["severity"] = serde_json::json!(s.as_str());
     }
 
     if let Some(ref expiration_time) = args.expiration_time {

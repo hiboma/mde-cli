@@ -8,6 +8,7 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 - **Incidents** - List, get, and update incidents (via Microsoft Graph API)
 - **Advanced Hunting** - Run KQL queries against the advanced hunting API
 - **Machines** - List, get machine details, view timelines and logon users
+- **Indicators** - Create, list, and delete indicators (exclusions/blocks)
 - **Agent Mode** - Credential isolation for use with LLM agents (ssh-agent pattern)
 - **OAuth2 Authentication** - Browser login (Authorization Code Flow with PKCE) and client credentials
 
@@ -63,6 +64,7 @@ client_secret = "your-client-secret"
 | `Machine.Read.All` | Application | Read machine info |
 | `ThreatHunting.Read.All` | Application | Run advanced hunting queries (Graph API) |
 | `Incident.Read.All` | Delegated | Read incidents (Graph API) |
+| `Ti.ReadWrite` | Application | Manage indicators (create/delete) |
 
 3. Create a client secret under **Certificates & secrets**
 
@@ -117,6 +119,26 @@ mde-cli machines timeline <machine-id>
 mde-cli machines logon-users <machine-id>
 ```
 
+### Indicators
+
+```bash
+# List indicators
+mde-cli indicators list
+
+# List indicators filtered by type
+mde-cli indicators list --indicator-type FileSha256
+
+# Create an exclusion (allow) indicator for a file hash
+mde-cli indicators create <SHA256> \
+  --indicator-type FileSha256 \
+  --action Allowed \
+  --title "FP exclusion" \
+  --no-alert
+
+# Delete an indicator by ID
+mde-cli indicators delete <indicator-id>
+```
+
 ### Agent Mode (Credential Isolation)
 
 Agent mode isolates credentials from the process that invokes `mde-cli` commands. This is useful when running under LLM agents (e.g., Claude Code) where you want to prevent credential leakage via prompt injection.
@@ -157,7 +179,7 @@ mde-cli alerts list --raw
 
 | Subcommand | Base URL | Scope |
 |---|---|---|
-| `alerts`, `machines` | `https://api.security.microsoft.com` | `https://api.securitycenter.microsoft.com/.default` |
+| `alerts`, `machines`, `indicators` | `https://api.security.microsoft.com` | `https://api.securitycenter.microsoft.com/.default` |
 | `hunting`, `incidents` | `https://graph.microsoft.com` | `https://graph.microsoft.com/.default` |
 
 ## License

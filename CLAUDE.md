@@ -27,6 +27,14 @@ cargo fmt                # Format
 - `src/config/` - Configuration file handling
 - `src/error.rs` - Error types
 
+### Indicators
+
+- `indicators` subcommand manages MDE Indicators API (`/api/indicators`)
+- Supports `list`, `create`, `delete` operations
+- `create` accepts indicatorType (FileSha256, FileSha1, FileMd5, CertificateThumbprint, IpAddress, DomainName, Url) and action (Allowed, Alert, AlertAndBlock, Block)
+- Uses `securitycenter` scope, same as alerts/machines
+- Registered in agent command whitelist (`agent/security.rs`)
+
 ### Shared Mode
 
 - `mde-cli agent start --shared` writes session info to `~/.local/share/mde-cli/session.json`

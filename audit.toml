@@ -1,0 +1,4 @@
+[advisories]
+# RUSTSEC-2026-0097: rand unsound with custom logger using rand::rng()
+# No fix available yet upstream; warning-only advisory, not a direct exploit vector
+ignore = ["RUSTSEC-2026-0097"]

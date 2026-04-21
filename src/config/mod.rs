@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 pub mod credential_store;
 
-use credential_store::{ACCOUNT_CLIENT_SECRET, CredentialStore, default_store};
+use credential_store::{ACCOUNT_CLIENT_SECRET, CredentialStore, StoreError, default_store};
 
 const DEFAULT_MDE_BASE_URL: &str = "https://api.security.microsoft.com";
 const DEFAULT_GRAPH_BASE_URL: &str = "https://graph.microsoft.com";
@@ -32,18 +32,44 @@ fn non_empty(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.is_empty())
 }
 
-/// Look up a secret in the credential store, treating backend failures as
-/// "not stored" (warned to stderr) so resolution falls through to the next source.
-fn read_secret_from_store(store: Option<&dyn CredentialStore>, account: &str) -> Option<String> {
-    let store = store?;
+/// Result of consulting the credential store for a secret.
+enum StoreLookup {
+    /// No store, or store backend not available (non-macOS build, etc.).
+    /// Caller should fall through to the next source.
+    SkipFallthrough,
+    /// Store reports the secret is not stored. Fall through to the next source.
+    NotStored,
+    /// Store returned the secret value.
+    Found(String),
+    /// Backend error (e.g. user denied the Keychain prompt, daemon down).
+    /// Caller MUST NOT fall through to credentials.toml — silently picking
+    /// up a stale plaintext secret would defeat the point of moving the
+    /// secret into the Keychain in the first place.
+    BackendError,
+}
+
+fn read_secret_from_store(store: Option<&dyn CredentialStore>, account: &str) -> StoreLookup {
+    let Some(store) = store else {
+        return StoreLookup::SkipFallthrough;
+    };
     match store.get(account) {
-        Ok(v) => v,
-        Err(e) => {
+        Ok(Some(v)) => StoreLookup::Found(v),
+        Ok(None) => StoreLookup::NotStored,
+        Err(StoreError::Unavailable(msg)) => {
             eprintln!(
-                "warning: credential store lookup failed for {}: {}",
-                account, e
+                "warning: credential store unavailable for {}: {}",
+                account, msg
             );
-            None
+            StoreLookup::SkipFallthrough
+        }
+        Err(StoreError::Backend(msg)) => {
+            eprintln!(
+                "error: credential store backend failure for {}: {}. \
+                 Refusing to fall back to credentials.toml — fix the store \
+                 access or unset the entry to make the toml fallback explicit.",
+                account, msg
+            );
+            StoreLookup::BackendError
         }
     }
 }
@@ -178,10 +204,17 @@ impl MdeCredentials {
             .or_else(|| std::env::var("MDE_CLIENT_ID").ok())
             .or(file.client_id);
 
-        let client_secret = std::env::var("MDE_CLIENT_SECRET")
-            .ok()
-            .or_else(|| read_secret_from_store(store, ACCOUNT_CLIENT_SECRET))
-            .or(file.client_secret);
+        let client_secret = std::env::var("MDE_CLIENT_SECRET").ok().or_else(|| {
+            match read_secret_from_store(store, ACCOUNT_CLIENT_SECRET) {
+                StoreLookup::Found(v) => Some(v),
+                // Backend failures: do NOT fall back to plaintext toml.
+                // Surface the missing secret to the caller, which will turn
+                // into a "client_secret not set" error from validate().
+                StoreLookup::BackendError => None,
+                // Store skipped or empty: fall through to toml.
+                StoreLookup::SkipFallthrough | StoreLookup::NotStored => file.client_secret,
+            }
+        });
 
         let access_token = std::env::var("MDE_ACCESS_TOKEN").ok();
 

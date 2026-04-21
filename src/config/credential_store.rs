@@ -67,15 +67,13 @@ mod keychain {
             match entry.get_password() {
                 Ok(v) => Ok(Some(v)),
                 Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(StoreError::Backend(e.to_string())),
+                Err(e) => Err(classify_keyring_err(e)),
             }
         }
 
         fn set(&self, account: &str, value: &str) -> Result<(), StoreError> {
             let entry = Self::entry(account)?;
-            entry
-                .set_password(value)
-                .map_err(|e| StoreError::Backend(e.to_string()))
+            entry.set_password(value).map_err(classify_keyring_err)
         }
 
         fn delete(&self, account: &str) -> Result<(), StoreError> {
@@ -83,8 +81,30 @@ mod keychain {
             match entry.delete_credential() {
                 Ok(()) => Ok(()),
                 Err(keyring::Error::NoEntry) => Ok(()),
-                Err(e) => Err(StoreError::Backend(e.to_string())),
+                Err(e) => Err(classify_keyring_err(e)),
             }
+        }
+    }
+
+    /// Classify a `keyring::Error` into `Unavailable` (the store as a whole
+    /// is not present, e.g. CI sandbox without a default keychain) vs
+    /// `Backend` (an actual access failure that the user should investigate
+    /// — denied prompt, daemon down, ACL mismatch).
+    ///
+    /// "default keychain could not be found" comes from
+    /// `Security.framework`'s `errSecNoDefaultKeychain` and means there is
+    /// nothing to read from at all; treating it as `Backend` would block
+    /// the toml fallback for users who never opted into the Keychain.
+    fn classify_keyring_err(e: keyring::Error) -> StoreError {
+        let msg = e.to_string();
+        let lower = msg.to_lowercase();
+        let unavailable = lower.contains("no default keychain")
+            || lower.contains("default keychain could not be found")
+            || lower.contains("no platform credential store");
+        if unavailable {
+            StoreError::Unavailable(msg)
+        } else {
+            StoreError::Backend(msg)
         }
     }
 }

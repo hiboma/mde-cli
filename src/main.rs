@@ -12,8 +12,56 @@ use mde::client::MdeClient;
 use mde::config::MdeCredentials;
 use mde::error::AppError;
 
+/// Load `.env` from cwd but refuse to inject `MDE_*` keys into the
+/// environment.
+///
+/// Why: `MDE_CLIENT_SECRET` (and friends) are credentials that we want
+/// to source from one of three trusted places — explicit env vars set by
+/// the caller, the macOS Keychain, or `~/.config/mde/credentials.toml`.
+/// `.env` is none of those: it lives in the current working directory,
+/// which is typically a user's project tree. A malicious `.env` dropped
+/// into a repo (or one carelessly checked into a tutorial) would
+/// silently override the user's Keychain secret, redirecting all
+/// subsequent OAuth flows to an attacker-controlled tenant.
+///
+/// We still honor `.env` for non-credential entries (proxy settings,
+/// `RUST_LOG`, etc.) so existing workflows continue to work.
+fn load_dotenv_excluding_mde_keys() {
+    // Snapshot which MDE_* keys exist in the real environment *before*
+    // dotenv runs. Anything that appears after dotenv but was not in
+    // this snapshot came from `.env` and must be removed.
+    use std::collections::HashSet;
+    let pre: HashSet<String> = std::env::vars()
+        .map(|(k, _)| k)
+        .filter(|k| k.starts_with("MDE_"))
+        .collect();
+
+    if dotenvy::dotenv().is_err() {
+        return;
+    }
+
+    // Anything starting with MDE_ that did not exist before dotenv ran
+    // was injected from .env. Strip it.
+    let injected: Vec<String> = std::env::vars()
+        .map(|(k, _)| k)
+        .filter(|k| k.starts_with("MDE_") && !pre.contains(k))
+        .collect();
+    for k in &injected {
+        // SAFETY: single-threaded context; no other thread observes env
+        // mutations at this point in startup.
+        unsafe { std::env::remove_var(k) };
+    }
+    if !injected.is_empty() {
+        eprintln!(
+            "warning: ignored MDE_* keys from .env ({}). Set them \
+             explicitly or use `mde-cli credentials set` instead.",
+            injected.join(", ")
+        );
+    }
+}
+
 fn main() {
-    dotenvy::dotenv().ok();
+    load_dotenv_excluding_mde_keys();
     let cli = Cli::parse();
 
     // For subcommands that do not talk to the API (`credentials`,
@@ -38,6 +86,18 @@ fn main() {
 
     // Resolve credentials early (before fork).
     let credentials = MdeCredentials::resolve(cli.tenant_id.as_deref(), cli.client_id.as_deref());
+
+    // Scrub MDE_* from this process's environment immediately after
+    // resolution. Previously this was only done in the agent-fork path,
+    // but for direct-API invocations the secret was visible via `ps -E`
+    // / `/proc/<pid>/environ` for the lifetime of the process. Doing it
+    // here makes both code paths consistent and runs while we are still
+    // single-threaded (before tokio runtime creation).
+    //
+    // SAFETY: Single-threaded context (before tokio runtime creation).
+    unsafe {
+        MdeCredentials::clear_env();
+    }
 
     // Handle agent start (fork) before creating tokio runtime.
     // fork() is unsafe in multi-threaded processes, so we must do it here.
@@ -69,12 +129,7 @@ fn main() {
             }
         }
 
-        // Clear MDE credentials from environment before fork.
-        // The child process will use the MdeCredentials struct instead.
-        // SAFETY: Single-threaded context (before tokio runtime creation).
-        unsafe {
-            MdeCredentials::clear_env();
-        }
+        // (env was already scrubbed right after resolve(); no-op here.)
 
         if let Err(e) = mde::agent::ensure_socket_dir() {
             eprintln!("Error: failed to create socket directory: {}", e);
@@ -272,11 +327,8 @@ async fn handle_agent_command(
 
             mde::agent::validate_credentials(&credentials).map_err(AppError::Config)?;
 
-            // Clear MDE credentials from environment in foreground mode too.
-            // SAFETY: Called before agent server starts processing requests.
-            unsafe {
-                MdeCredentials::clear_env();
-            }
+            // (env was already scrubbed in main() before tokio runtime
+            // creation; no clear_env call needed here.)
 
             let session_token = mde::agent::generate_token();
             let socket_path = socket.as_ref().map(PathBuf::from);

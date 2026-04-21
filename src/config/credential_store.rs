@@ -91,16 +91,47 @@ mod keychain {
         }
     }
 
+    /// `errSecNoDefaultKeychain` from `Security.framework`.
+    /// See <https://developer.apple.com/documentation/security/errsecnodefaultkeychain>.
+    /// Locale-independent: the OSStatus is the same on every macOS install.
+    pub(super) const ERR_SEC_NO_DEFAULT_KEYCHAIN: i32 = -25307;
+    pub(super) const ERR_SEC_INVALID_KEYCHAIN: i32 = -25295;
+
     /// Classify a `keyring::Error` into `Unavailable` (the store as a whole
     /// is not present, e.g. CI sandbox without a default keychain) vs
     /// `Backend` (an actual access failure that the user should investigate
     /// — denied prompt, daemon down, ACL mismatch).
     ///
-    /// "default keychain could not be found" comes from
-    /// `Security.framework`'s `errSecNoDefaultKeychain` and means there is
-    /// nothing to read from at all; treating it as `Backend` would block
-    /// the toml fallback for users who never opted into the Keychain.
-    fn classify_keyring_err(e: keyring::Error) -> StoreError {
+    /// We prefer to inspect the underlying `security_framework::base::Error`
+    /// OSStatus when available: the codes are locale-independent, whereas
+    /// the human-readable message text on `keyring::Error` is translated
+    /// (e.g. Japanese macOS reports the same condition with different
+    /// wording, which would slip past a string-match allowlist and force
+    /// the user into the `Backend` branch on a clean machine).
+    ///
+    /// We keep the previous string-match heuristic as a fallback for the
+    /// `NoStorageAccess` variant and for unexpected error shapes.
+    pub(super) fn classify_keyring_err(e: keyring::Error) -> StoreError {
+        // First try to extract a `security_framework::base::Error` from
+        // the boxed source. `keyring`'s apple-native backend always wraps
+        // a security_framework error inside `PlatformFailure`, so the
+        // downcast succeeds in practice.
+        if let keyring::Error::PlatformFailure(ref boxed) = e
+            && let Some(sf_err) = boxed.downcast_ref::<security_framework::base::Error>()
+        {
+            let code = sf_err.code();
+            let msg = e.to_string();
+            if code == ERR_SEC_NO_DEFAULT_KEYCHAIN || code == ERR_SEC_INVALID_KEYCHAIN {
+                return StoreError::Unavailable(msg);
+            }
+            return StoreError::Backend(msg);
+        }
+
+        // Fallback for non-PlatformFailure errors (Invalid, NoStorageAccess)
+        // or for unrecognized boxed source types: keep the locale-fragile
+        // string match as a last line of defense, but err on the side of
+        // Backend (the cautious choice — refuses to fall through to the
+        // toml).
         let msg = e.to_string();
         let lower = msg.to_lowercase();
         let unavailable = lower.contains("no default keychain")
@@ -194,5 +225,36 @@ mod tests {
     fn memory_store_delete_missing_is_ok() {
         let s = MemoryStore::new();
         s.delete("missing").unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn classify_keyring_err_recognizes_no_default_keychain_by_osstatus() {
+        // Build a security_framework error directly from the OSStatus,
+        // box it through keyring::Error::PlatformFailure, and confirm
+        // the classifier maps it to Unavailable regardless of the
+        // localized message text.
+        let sf = security_framework::base::Error::from_code(
+            super::keychain::ERR_SEC_NO_DEFAULT_KEYCHAIN,
+        );
+        let kr = keyring::Error::PlatformFailure(Box::new(sf));
+        match super::keychain::classify_keyring_err(kr) {
+            StoreError::Unavailable(_) => {}
+            other => panic!("expected Unavailable, got {:?}", other),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn classify_keyring_err_treats_other_osstatus_as_backend() {
+        // errSecAuthFailed = -25293 — a real access denial, NOT an
+        // "unavailable backend". Must surface as Backend so resolve()
+        // refuses the toml fallback.
+        let sf = security_framework::base::Error::from_code(-25293);
+        let kr = keyring::Error::PlatformFailure(Box::new(sf));
+        match super::keychain::classify_keyring_err(kr) {
+            StoreError::Backend(_) => {}
+            other => panic!("expected Backend, got {:?}", other),
+        }
     }
 }

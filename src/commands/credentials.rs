@@ -4,6 +4,8 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use zeroize::Zeroizing;
+
 use crate::cli::credentials::{CredentialField, CredentialsCommand};
 use crate::config::credential_store::{CredentialStore, KEY_CLIENT_SECRET, default_store};
 use crate::error::AppError;
@@ -32,22 +34,28 @@ fn set_value(
     field: CredentialField,
     from_stdin: bool,
 ) -> Result<(), AppError> {
-    let value = if from_stdin {
-        let mut buf = String::new();
+    // Wrap the secret in Zeroizing so the heap allocation is wiped on
+    // drop. This narrows the window where a swap-out, core dump, or
+    // panic-time backtrace could expose the value. The buffer used to
+    // read stdin is also zeroized for the same reason.
+    let value: Zeroizing<String> = if from_stdin {
+        let mut buf: Zeroizing<String> = Zeroizing::new(String::new());
         io::stdin()
             .read_line(&mut buf)
             .map_err(|e| AppError::Config(format!("failed to read stdin: {}", e)))?;
         // Trim full whitespace (not just CRLF) so a stray trailing space
         // pasted from a password manager does not silently corrupt the secret.
-        let trimmed = buf.trim().to_string();
+        let trimmed = Zeroizing::new(buf.trim().to_string());
         if trimmed.is_empty() {
             return Err(AppError::InvalidInput("empty value from stdin".to_string()));
         }
         trimmed
     } else {
         let prompt = format!("Enter {} (input hidden): ", field.key());
-        rpassword::prompt_password(prompt)
-            .map_err(|e| AppError::Config(format!("failed to read password: {}", e)))?
+        Zeroizing::new(
+            rpassword::prompt_password(prompt)
+                .map_err(|e| AppError::Config(format!("failed to read password: {}", e)))?,
+        )
     };
 
     if value.is_empty() {
@@ -57,7 +65,8 @@ fn set_value(
     store
         .set(field.key(), &value)
         .map_err(|e| AppError::Config(e.to_string()))?;
-    println!("✅ Stored {} in credential store", field.key());
+    println!("Stored {} in credential store", field.key());
+    println!("Verify with: mde-cli credentials status");
     Ok(())
 }
 
@@ -65,7 +74,7 @@ fn delete_value(store: &dyn CredentialStore, field: CredentialField) -> Result<(
     store
         .delete(field.key())
         .map_err(|e| AppError::Config(e.to_string()))?;
-    println!("✅ Deleted {} from credential store", field.key());
+    println!("Deleted {} from credential store", field.key());
     Ok(())
 }
 
@@ -74,12 +83,26 @@ fn print_status(store: &dyn CredentialStore) -> Result<(), AppError> {
     // "client_secret") and a presence flag — never the credential value.
     let keys = [KEY_CLIENT_SECRET];
     println!("Credential store: macOS Keychain (service=dev.mde-cli)");
+    let mut saw_error = false;
     for key in keys {
         match store.get(key) {
             Ok(Some(_)) => println!("  {} : stored", key),
             Ok(None) => println!("  {} : not stored", key),
-            Err(e) => println!("  {} : error ({})", key, e),
+            Err(e) => {
+                println!("  {} : error ({})", key, e);
+                saw_error = true;
+            }
         }
+    }
+    if saw_error {
+        println!();
+        println!(
+            "One or more entries could not be accessed. This usually means a \
+             Keychain ACL change (often triggered by a `cargo install` rebuild \
+             that changed the binary's code signature). See the README section \
+             \"Credential storage\" -> \"Notes on Keychain prompts\" for how to \
+             re-grant access via Keychain Access.app."
+        );
     }
     Ok(())
 }
@@ -99,11 +122,16 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
     let canonical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
     println!("Found credentials.toml: {}", canonical.display());
 
-    let original = fs::read_to_string(&path)
-        .map_err(|e| AppError::Config(format!("failed to read {}: {}", canonical.display(), e)))?;
+    // Read the toml into a Zeroizing buffer: it contains the plaintext
+    // secret we are about to migrate, and we want every copy of those
+    // bytes wiped before this scope returns.
+    let original: Zeroizing<String> =
+        Zeroizing::new(fs::read_to_string(&path).map_err(|e| {
+            AppError::Config(format!("failed to read {}: {}", canonical.display(), e))
+        })?);
 
-    let secret = match extract_client_secret(&original) {
-        SecretScan::Present(s) => s,
+    let secret: Zeroizing<String> = match extract_client_secret(&original) {
+        SecretScan::Present(s) => Zeroizing::new(s),
         SecretScan::Absent => {
             println!("  client_secret: not present (nothing to migrate)");
             println!();
@@ -155,6 +183,8 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
     // copy on disk that the user has to remember to delete; we surface
     // that risk loudly when they choose to keep it.
     let mode = prompt_disposal()?;
+    // `updated` is derived by removing the secret line from `original`, so
+    // it does not contain the secret. Plain String is fine.
     let updated = remove_client_secret_line(&original);
 
     match mode {
@@ -300,30 +330,25 @@ fn write_secret_file(path: &Path, bytes: &[u8], exclusive: bool) -> Result<(), A
 /// 0o600 then `rename` over the original. The mode of the resulting file
 /// is the mode of the tempfile (0o600), which is more restrictive than the
 /// previous mode and therefore safe.
+///
+/// Uses `tempfile::NamedTempFile::new_in` so the tempfile name is
+/// random rather than predictable (a unix-nanos suffix could be raced
+/// in shared dirs), and so the tempfile is dropped automatically if the
+/// rename step fails — no manual cleanup path to forget about.
 fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".tmp.{}", ts));
-    let tmp = dir.join(name);
-
-    {
-        let mut f = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(SECRET_FILE_MODE)
-            .open(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all().ok();
-    }
-    let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(SECRET_FILE_MODE));
-    fs::rename(&tmp, path).inspect_err(|_| {
-        // Best-effort cleanup of the tempfile if rename fails.
-        let _ = fs::remove_file(&tmp);
-    })
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".mde-cred-")
+        .suffix(".tmp")
+        .permissions(fs::Permissions::from_mode(SECRET_FILE_MODE))
+        .tempfile_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all().ok();
+    // persist() consumes the NamedTempFile; on success the file lives at
+    // `path`. On failure the NamedTempFile is returned inside the error
+    // and dropped, which unlinks it.
+    tmp.persist(path).map_err(|e| e.error)?;
+    Ok(())
 }
 
 fn find_credentials_toml() -> Option<PathBuf> {

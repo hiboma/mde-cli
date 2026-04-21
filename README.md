@@ -64,7 +64,20 @@ highest priority first:
 1. `MDE_CLIENT_SECRET` environment variable
 2. **macOS Keychain** (login keychain, `service=dev.mde-cli`,
    `account=client_secret`)
-3. `~/.config/mde/credentials.toml`
+3. `credentials.toml`, searched in this order:
+   1. `./.mde-credentials.toml` (current working directory)
+   2. `$XDG_CONFIG_HOME/mde/credentials.toml` (falls back to
+      `~/.config/mde/credentials.toml`)
+
+The cwd-relative `.mde-credentials.toml` is useful for project-local
+overrides but note that it is picked up from whichever directory you
+run `mde-cli` in.
+
+`.env` files in the current directory are read for non-credential
+variables (proxy settings, `RUST_LOG`, etc.), but `MDE_*` keys loaded
+from `.env` are **ignored** and logged as a warning. Those would
+otherwise let a malicious `.env` in a project tree override your
+Keychain secret.
 
 Storing the secret in the Keychain keeps it out of plaintext config
 files (and out of dotfile backups, Time Machine snapshots, accidental
@@ -90,10 +103,35 @@ into the Keychain in one step:
 mde-cli credentials migrate
 ```
 
-`migrate` writes a 0o600 backup, performs an atomic rewrite of the toml
-(blanking `client_secret`), and rolls back the Keychain entry if the
-rewrite fails. The backup still contains the plaintext secret — delete
-it once you have verified the new path works.
+`migrate` writes the secret to the Keychain and then offers to dispose
+of the plaintext copy:
+
+- **Recommended (default)**: the `client_secret` line is removed from
+  the toml via an atomic temp-file rename. No plaintext copy remains on
+  disk.
+- **Opt-in**: a 0o600 backup of the original toml is kept alongside
+  the rewritten file. Choose this only if you need to roll back to the
+  old setup.
+
+> ⚠️ **The opt-in backup still contains the plaintext secret.** A
+> backup under `$HOME` is typically included in Time Machine / iCloud /
+> rsync snapshots and defeats the point of moving the secret into the
+> Keychain. Delete it as soon as you have confirmed the new setup works
+> with `mde-cli credentials status`.
+
+If the rewrite fails partway through, migrate rolls back the Keychain
+entry it just wrote so you are not left in a half-migrated state.
+
+#### Recovering from an interrupted migrate
+
+If you hit Ctrl-C (or your machine loses power) **between** the
+Keychain write and the toml rewrite, both copies of the secret exist:
+the new Keychain entry *and* the untouched `credentials.toml`. The
+process is idempotent — re-running `mde-cli credentials migrate` on the
+same file will detect that the secret is still present in the toml and
+re-run the disposal step. Alternatively, if you want to bail out
+entirely, `mde-cli credentials delete client-secret` removes the
+Keychain entry and the toml stays as it was.
 
 #### Inspecting the entry
 

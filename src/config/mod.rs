@@ -336,12 +336,7 @@ unsafe fn overwrite_environ_value(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    /// Resolve-related tests mutate process-global env vars (HOME, XDG_CONFIG_HOME,
-    /// MDE_*) which makes them order-dependent under cargo test's default
-    /// thread-pool. Serialize them with a shared mutex.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    use serial_test::serial;
 
     #[test]
     fn test_credentials_file_parse_full() {
@@ -482,8 +477,8 @@ client_secret = "toml-secret"
     }
 
     #[test]
+    #[serial]
     fn test_mde_credentials_resolve_empty() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         with_isolated_credentials(|| {
             let creds = MdeCredentials::resolve(None, None);
@@ -497,8 +492,8 @@ client_secret = "toml-secret"
     }
 
     #[test]
+    #[serial]
     fn test_mde_credentials_clear_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
         // Set MDE env vars
         unsafe {
             std::env::set_var("MDE_TENANT_ID", "test-tenant");
@@ -542,8 +537,8 @@ client_secret = "toml-secret"
     }
 
     #[test]
+    #[serial]
     fn test_mde_credentials_resolve_credentials_file_fallback() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         let toml_content = r#"
 [credentials]
@@ -564,8 +559,8 @@ graph_base_url = "https://custom.graph.example.com"
     }
 
     #[test]
+    #[serial]
     fn test_mde_credentials_resolve_cli_overrides_credentials_file() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         let toml_content = r#"
 [credentials]
@@ -584,8 +579,8 @@ client_secret = "file-secret"
     }
 
     #[test]
+    #[serial]
     fn test_mde_credentials_resolve_then_clear_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
         with_isolated_credentials(|| {
             // Set env vars
             unsafe {
@@ -633,8 +628,8 @@ client_secret = "file-secret"
     }
 
     #[test]
+    #[serial]
     fn test_resolve_with_store_uses_keychain_when_no_env() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         with_isolated_credentials(|| {
             let store = credential_store::test_support::MemoryStore::new();
@@ -645,8 +640,8 @@ client_secret = "file-secret"
     }
 
     #[test]
+    #[serial]
     fn test_resolve_with_store_env_overrides_keychain() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         with_isolated_credentials(|| {
             unsafe { std::env::set_var("MDE_CLIENT_SECRET", "env-secret") };
@@ -659,8 +654,8 @@ client_secret = "file-secret"
     }
 
     #[test]
+    #[serial]
     fn test_resolve_with_store_falls_back_to_toml() {
-        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         let toml_content = r#"
 [credentials]

@@ -252,6 +252,7 @@ pub fn validate_credentials(credentials: &crate::config::MdeCredentials) -> Resu
 #[cfg(test)]
 mod env_tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_is_env_whitelisted_exact_match() {
@@ -288,6 +289,7 @@ mod env_tests {
     }
 
     #[test]
+    #[serial]
     fn test_sanitize_env_removes_non_whitelisted() {
         let key = "MDE_TEST_SANITIZE_SECRET_12345";
         unsafe {
@@ -304,6 +306,7 @@ mod env_tests {
     }
 
     #[test]
+    #[serial]
     fn test_sanitize_env_keeps_whitelisted() {
         // HOME is whitelisted and typically always set.
         let home_before = std::env::var("HOME").ok();
@@ -315,6 +318,7 @@ mod env_tests {
     }
 
     #[test]
+    #[serial]
     fn test_sanitize_env_removes_mde_credentials() {
         // MDE credentials are no longer whitelisted and should be removed by sanitize_env.
         let key = "MDE_CLIENT_SECRET";

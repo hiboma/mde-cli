@@ -78,6 +78,18 @@ jobs:
           tool: cargo-audit@0.22.1
       - run: cargo audit
 
+  deny:
+    name: Dependency policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@eea29cff9a2b68892c0845ae3e4f45fc47ee9354 # v2.75.13
+        with:
+          tool: cargo-deny@0.19.0
+      - run: cargo deny check
+
   actionlint:
     name: Lint workflows
     runs-on: ubuntu-latest

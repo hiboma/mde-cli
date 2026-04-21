@@ -3,6 +3,10 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 
+pub mod credential_store;
+
+use credential_store::{ACCOUNT_CLIENT_SECRET, CredentialStore, default_store};
+
 const DEFAULT_MDE_BASE_URL: &str = "https://api.security.microsoft.com";
 const DEFAULT_GRAPH_BASE_URL: &str = "https://graph.microsoft.com";
 
@@ -26,6 +30,22 @@ struct CredentialsFile {
 /// (e.g. `client_id = ""`) do not bypass validation.
 fn non_empty(s: Option<String>) -> Option<String> {
     s.filter(|v| !v.is_empty())
+}
+
+/// Look up a secret in the credential store, treating backend failures as
+/// "not stored" (warned to stderr) so resolution falls through to the next source.
+fn read_secret_from_store(store: Option<&dyn CredentialStore>, account: &str) -> Option<String> {
+    let store = store?;
+    match store.get(account) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!(
+                "warning: credential store lookup failed for {}: {}",
+                account, e
+            );
+            None
+        }
+    }
 }
 
 /// Search paths for credentials.toml (highest priority first).
@@ -75,10 +95,10 @@ fn load_credentials_file() -> CredentialsFile {
 }
 
 /// Resolved MDE credentials collected from CLI args, environment variables,
-/// and credentials.toml.
+/// the OS credential store (e.g. macOS Keychain), and credentials.toml.
 /// Once constructed, the process should unset the MDE_* environment variables so that
 /// forked child processes (agent) do not inherit credentials via the environment.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MdeCredentials {
     pub tenant_id: Option<String>,
     pub client_id: Option<String>,
@@ -86,6 +106,29 @@ pub struct MdeCredentials {
     pub access_token: Option<String>,
     pub mde_base_url: String,
     pub graph_base_url: String,
+}
+
+/// Custom `Debug` impl that masks `client_secret` and `access_token` so that
+/// accidental `dbg!` / `{:?}` formatting cannot leak secrets into logs or
+/// error messages.
+impl std::fmt::Debug for MdeCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MdeCredentials")
+            .field("tenant_id", &self.tenant_id)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &mask(&self.client_secret))
+            .field("access_token", &mask(&self.access_token))
+            .field("mde_base_url", &self.mde_base_url)
+            .field("graph_base_url", &self.graph_base_url)
+            .finish()
+    }
+}
+
+fn mask(v: &Option<String>) -> &'static str {
+    match v {
+        Some(_) => "***",
+        None => "None",
+    }
 }
 
 impl Default for MdeCredentials {
@@ -102,9 +145,27 @@ impl Default for MdeCredentials {
 }
 
 impl MdeCredentials {
-    /// Resolve credentials from CLI args, environment variables, and credentials.toml.
-    /// Priority: CLI args > environment variables > credentials.toml > defaults.
+    /// Resolve credentials from CLI args, environment variables, the OS
+    /// credential store, and credentials.toml.
+    ///
+    /// Priority for `client_secret`:
+    ///   env var > Keychain > credentials.toml > None
+    /// Priority for `tenant_id` / `client_id`:
+    ///   CLI args > env var > credentials.toml > None
+    ///
+    /// Keychain access may prompt the user (macOS) on first use. Backend
+    /// errors are reported on stderr and treated as "not stored" so we fall
+    /// through to the next source rather than aborting startup.
     pub fn resolve(cli_tenant_id: Option<&str>, cli_client_id: Option<&str>) -> Self {
+        Self::resolve_with_store(cli_tenant_id, cli_client_id, default_store().as_deref())
+    }
+
+    /// Like `resolve` but with an injectable credential store (used in tests).
+    pub fn resolve_with_store(
+        cli_tenant_id: Option<&str>,
+        cli_client_id: Option<&str>,
+        store: Option<&dyn CredentialStore>,
+    ) -> Self {
         let file = load_credentials_file();
 
         let tenant_id = cli_tenant_id
@@ -119,6 +180,7 @@ impl MdeCredentials {
 
         let client_secret = std::env::var("MDE_CLIENT_SECRET")
             .ok()
+            .or_else(|| read_secret_from_store(store, ACCOUNT_CLIENT_SECRET))
             .or(file.client_secret);
 
         let access_token = std::env::var("MDE_ACCESS_TOKEN").ok();
@@ -242,6 +304,12 @@ unsafe fn overwrite_environ_value(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Resolve-related tests mutate process-global env vars (HOME, XDG_CONFIG_HOME,
+    /// MDE_*) which makes them order-dependent under cargo test's default
+    /// thread-pool. Serialize them with a shared mutex.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_credentials_file_parse_full() {
@@ -383,6 +451,7 @@ client_secret = "toml-secret"
 
     #[test]
     fn test_mde_credentials_resolve_empty() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         with_isolated_credentials(|| {
             let creds = MdeCredentials::resolve(None, None);
@@ -397,6 +466,7 @@ client_secret = "toml-secret"
 
     #[test]
     fn test_mde_credentials_clear_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // Set MDE env vars
         unsafe {
             std::env::set_var("MDE_TENANT_ID", "test-tenant");
@@ -441,6 +511,7 @@ client_secret = "toml-secret"
 
     #[test]
     fn test_mde_credentials_resolve_credentials_file_fallback() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         let toml_content = r#"
 [credentials]
@@ -462,6 +533,7 @@ graph_base_url = "https://custom.graph.example.com"
 
     #[test]
     fn test_mde_credentials_resolve_cli_overrides_credentials_file() {
+        let _lock = ENV_LOCK.lock().unwrap();
         unsafe { clear_mde_env() };
         let toml_content = r#"
 [credentials]
@@ -481,6 +553,7 @@ client_secret = "file-secret"
 
     #[test]
     fn test_mde_credentials_resolve_then_clear_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
         with_isolated_credentials(|| {
             // Set env vars
             unsafe {
@@ -505,6 +578,67 @@ client_secret = "file-secret"
             // But env vars are gone
             assert!(std::env::var("MDE_TENANT_ID").is_err());
             assert!(std::env::var("MDE_CLIENT_SECRET").is_err());
+        });
+    }
+
+    #[test]
+    fn test_debug_masks_secrets() {
+        let creds = MdeCredentials {
+            tenant_id: Some("t".into()),
+            client_id: Some("c".into()),
+            client_secret: Some("super-secret".into()),
+            access_token: Some("super-token".into()),
+            ..Default::default()
+        };
+        let dbg = format!("{:?}", creds);
+        assert!(
+            !dbg.contains("super-secret"),
+            "client_secret leaked: {}",
+            dbg
+        );
+        assert!(!dbg.contains("super-token"), "access_token leaked: {}", dbg);
+        assert!(dbg.contains("***"));
+    }
+
+    #[test]
+    fn test_resolve_with_store_uses_keychain_when_no_env() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            let store = credential_store::test_support::MemoryStore::new();
+            store.set(ACCOUNT_CLIENT_SECRET, "kc-secret").unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.client_secret.as_deref(), Some("kc-secret"));
+        });
+    }
+
+    #[test]
+    fn test_resolve_with_store_env_overrides_keychain() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            unsafe { std::env::set_var("MDE_CLIENT_SECRET", "env-secret") };
+            let store = credential_store::test_support::MemoryStore::new();
+            store.set(ACCOUNT_CLIENT_SECRET, "kc-secret").unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.client_secret.as_deref(), Some("env-secret"));
+            unsafe { std::env::remove_var("MDE_CLIENT_SECRET") };
+        });
+    }
+
+    #[test]
+    fn test_resolve_with_store_falls_back_to_toml() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        unsafe { clear_mde_env() };
+        let toml_content = r#"
+[credentials]
+client_secret = "toml-secret"
+"#;
+        with_credentials_file(toml_content, || {
+            let store = credential_store::test_support::MemoryStore::new();
+            // Keychain empty -> falls through to TOML.
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.client_secret.as_deref(), Some("toml-secret"));
         });
     }
 }

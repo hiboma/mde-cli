@@ -52,6 +52,92 @@ client_id = "your-client-id"
 client_secret = "your-client-secret"
 ```
 
+`client_secret` should preferably be stored in the OS credential store
+instead — see [Credential storage](#credential-storage) below.
+
+### Credential storage
+
+`mde-cli` resolves the OAuth2 `client_secret` from the following sources,
+highest priority first:
+
+1. `MDE_CLIENT_SECRET` environment variable
+2. **macOS Keychain** (login keychain, `service=dev.mde-cli`,
+   `account=client_secret`)
+3. `~/.config/mde/credentials.toml`
+
+Storing the secret in the Keychain keeps it out of plaintext config
+files (and out of dotfile backups, Time Machine snapshots, accidental
+git commits, etc.).
+
+#### Storing the secret
+
+```bash
+# Interactive prompt (recommended)
+mde-cli credentials set client-secret
+
+# Non-interactive (CI / scripts)
+echo "$MDE_CLIENT_SECRET" | mde-cli credentials set client-secret --stdin
+
+# Confirm presence (the value is never printed)
+mde-cli credentials status
+```
+
+To migrate an existing plaintext `client_secret` from `credentials.toml`
+into the Keychain in one step:
+
+```bash
+mde-cli credentials migrate
+```
+
+`migrate` writes a 0o600 backup, performs an atomic rewrite of the toml
+(blanking `client_secret`), and rolls back the Keychain entry if the
+rewrite fails. The backup still contains the plaintext secret — delete
+it once you have verified the new path works.
+
+#### Inspecting the entry
+
+The entry lives in your **login** keychain as a `generic password`:
+
+| Attribute | Value |
+|---|---|
+| Kind | `application password` |
+| Service (Name / Where) | `dev.mde-cli` |
+| Account | `client_secret` |
+
+GUI:
+
+```
+Keychain Access.app → login → Passwords → search "dev.mde-cli"
+```
+
+CLI (metadata only):
+
+```bash
+security find-generic-password -s dev.mde-cli -a client_secret
+```
+
+#### Removing the entry
+
+```bash
+mde-cli credentials delete client-secret
+# or via macOS:
+security delete-generic-password -s dev.mde-cli -a client_secret
+```
+
+#### Notes on Keychain prompts
+
+macOS shows an access-prompt dialog the first time `mde-cli` reads the
+Keychain entry. Choosing **Always Allow** suppresses subsequent
+prompts.
+
+The dialog reappears whenever the binary's code signature changes —
+including after every `cargo install` rebuild. This is a macOS ACL
+behavior, not an `mde-cli` bug.
+
+If a non-`mde-cli` build of the binary keeps causing prompts, you can
+inspect the entry's Access Control list in Keychain Access.app and
+remove or replace the allowed-applications list.
+
 ### Azure AD App Registration
 
 1. Register an application in [Azure AD](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)

@@ -142,7 +142,19 @@ pub enum Commands {
         command: agent::AgentCommand,
     },
     /// Manage stored credentials (macOS Keychain)
-    #[command(subcommand_required = true, arg_required_else_help = true, hide = true)]
+    #[command(
+        subcommand_required = true,
+        arg_required_else_help = true,
+        hide = true,
+        long_about = "Manage stored credentials (macOS Keychain).\n\
+                      \n\
+                      Secrets are stored in the login keychain under \
+                      service=\"dev.mde-cli\". Inspect or delete via \
+                      Keychain Access.app or `security \
+                      find-generic-password -s dev.mde-cli`. See README \
+                      for the full credential resolution order and \
+                      migration steps."
+    )]
     Credentials {
         #[command(subcommand)]
         command: credentials::CredentialsCommand,

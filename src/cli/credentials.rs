@@ -35,9 +35,12 @@ pub enum CredentialField {
 }
 
 impl CredentialField {
-    pub fn account(self) -> &'static str {
+    /// The logical key under which this field is stored in the credential
+    /// store. Returns a static identifier (e.g. "client_secret") — never
+    /// the credential value.
+    pub fn key(self) -> &'static str {
         match self {
-            CredentialField::ClientSecret => crate::config::credential_store::ACCOUNT_CLIENT_SECRET,
+            CredentialField::ClientSecret => crate::config::credential_store::KEY_CLIENT_SECRET,
         }
     }
 }

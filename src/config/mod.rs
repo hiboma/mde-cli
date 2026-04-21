@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 pub mod credential_store;
 
-use credential_store::{ACCOUNT_CLIENT_SECRET, CredentialStore, StoreError, default_store};
+use credential_store::{CredentialStore, KEY_CLIENT_SECRET, StoreError, default_store};
 
 const DEFAULT_MDE_BASE_URL: &str = "https://api.security.microsoft.com";
 const DEFAULT_GRAPH_BASE_URL: &str = "https://graph.microsoft.com";
@@ -48,18 +48,17 @@ enum StoreLookup {
     BackendError,
 }
 
-fn read_secret_from_store(store: Option<&dyn CredentialStore>, account: &str) -> StoreLookup {
+fn read_secret_from_store(store: Option<&dyn CredentialStore>, key: &str) -> StoreLookup {
     let Some(store) = store else {
         return StoreLookup::SkipFallthrough;
     };
-    match store.get(account) {
+    match store.get(key) {
         Ok(Some(v)) => StoreLookup::Found(v),
         Ok(None) => StoreLookup::NotStored,
         Err(StoreError::Unavailable(msg)) => {
-            eprintln!(
-                "warning: credential store unavailable for {}: {}",
-                account, msg
-            );
+            // `key` here is a static label like "client_secret", not the
+            // credential value. Log it for diagnostics.
+            eprintln!("warning: credential store unavailable for {}: {}", key, msg);
             StoreLookup::SkipFallthrough
         }
         Err(StoreError::Backend(msg)) => {
@@ -67,7 +66,7 @@ fn read_secret_from_store(store: Option<&dyn CredentialStore>, account: &str) ->
                 "error: credential store backend failure for {}: {}. \
                  Refusing to fall back to credentials.toml — fix the store \
                  access or unset the entry to make the toml fallback explicit.",
-                account, msg
+                key, msg
             );
             StoreLookup::BackendError
         }
@@ -205,7 +204,7 @@ impl MdeCredentials {
             .or(file.client_id);
 
         let client_secret = std::env::var("MDE_CLIENT_SECRET").ok().or_else(|| {
-            match read_secret_from_store(store, ACCOUNT_CLIENT_SECRET) {
+            match read_secret_from_store(store, KEY_CLIENT_SECRET) {
                 StoreLookup::Found(v) => Some(v),
                 // Backend failures: do NOT fall back to plaintext toml.
                 // Surface the missing secret to the caller, which will turn
@@ -639,7 +638,7 @@ client_secret = "file-secret"
         unsafe { clear_mde_env() };
         with_isolated_credentials(|| {
             let store = credential_store::test_support::MemoryStore::new();
-            store.set(ACCOUNT_CLIENT_SECRET, "kc-secret").unwrap();
+            store.set(KEY_CLIENT_SECRET, "kc-secret").unwrap();
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert_eq!(creds.client_secret.as_deref(), Some("kc-secret"));
         });
@@ -652,7 +651,7 @@ client_secret = "file-secret"
         with_isolated_credentials(|| {
             unsafe { std::env::set_var("MDE_CLIENT_SECRET", "env-secret") };
             let store = credential_store::test_support::MemoryStore::new();
-            store.set(ACCOUNT_CLIENT_SECRET, "kc-secret").unwrap();
+            store.set(KEY_CLIENT_SECRET, "kc-secret").unwrap();
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert_eq!(creds.client_secret.as_deref(), Some("env-secret"));
             unsafe { std::env::remove_var("MDE_CLIENT_SECRET") };

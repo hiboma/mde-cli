@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cli::credentials::{CredentialField, CredentialsCommand};
-use crate::config::credential_store::{ACCOUNT_CLIENT_SECRET, CredentialStore, default_store};
+use crate::config::credential_store::{CredentialStore, KEY_CLIENT_SECRET, default_store};
 use crate::error::AppError;
 
 /// File mode for any artifact that may contain plaintext credentials.
@@ -45,7 +45,7 @@ fn set_value(
         }
         trimmed
     } else {
-        let prompt = format!("Enter {} (input hidden): ", field.account());
+        let prompt = format!("Enter {} (input hidden): ", field.key());
         rpassword::prompt_password(prompt)
             .map_err(|e| AppError::Config(format!("failed to read password: {}", e)))?
     };
@@ -55,29 +55,30 @@ fn set_value(
     }
 
     store
-        .set(field.account(), &value)
+        .set(field.key(), &value)
         .map_err(|e| AppError::Config(e.to_string()))?;
-    println!("✅ Stored {} in credential store", field.account());
+    println!("✅ Stored {} in credential store", field.key());
     Ok(())
 }
 
 fn delete_value(store: &dyn CredentialStore, field: CredentialField) -> Result<(), AppError> {
     store
-        .delete(field.account())
+        .delete(field.key())
         .map_err(|e| AppError::Config(e.to_string()))?;
-    println!("✅ Deleted {} from credential store", field.account());
+    println!("✅ Deleted {} from credential store", field.key());
     Ok(())
 }
 
 fn print_status(store: &dyn CredentialStore) -> Result<(), AppError> {
-    // Probe each known field; report presence only, never the value.
-    let fields = [(CredentialField::ClientSecret, ACCOUNT_CLIENT_SECRET)];
+    // Probe each known field. We print only the field's static key (e.g.
+    // "client_secret") and a presence flag — never the credential value.
+    let keys = [KEY_CLIENT_SECRET];
     println!("Credential store: macOS Keychain (service=dev.mde-cli)");
-    for (_, account) in fields {
-        match store.get(account) {
-            Ok(Some(_)) => println!("  {} : stored", account),
-            Ok(None) => println!("  {} : not stored", account),
-            Err(e) => println!("  {} : error ({})", account, e),
+    for key in keys {
+        match store.get(key) {
+            Ok(Some(_)) => println!("  {} : stored", key),
+            Ok(None) => println!("  {} : not stored", key),
+            Err(e) => println!("  {} : error ({})", key, e),
         }
     }
     Ok(())
@@ -142,7 +143,7 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
     println!("Backup written (mode 0600): {}", backup.display());
 
     store
-        .set(ACCOUNT_CLIENT_SECRET, &secret)
+        .set(KEY_CLIENT_SECRET, &secret)
         .map_err(|e| AppError::Config(format!("credential store: {}", e)))?;
     println!("Stored client_secret in credential store");
 
@@ -153,7 +154,7 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
     if let Err(e) = atomic_replace(&path, updated.as_bytes()) {
         // Roll back the Keychain entry we just wrote, then surface a
         // detailed error so the user knows where the secret lives now.
-        let rb = store.delete(ACCOUNT_CLIENT_SECRET);
+        let rb = store.delete(KEY_CLIENT_SECRET);
         let rb_msg = match rb {
             Ok(()) => "credential store entry rolled back".to_string(),
             Err(re) => format!(

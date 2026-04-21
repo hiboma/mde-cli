@@ -4,8 +4,10 @@ use std::fmt;
 /// Acts as a namespace so credentials do not collide with other apps.
 pub const SERVICE: &str = "dev.mde-cli";
 
-/// Account names (Keychain "account" attribute) for each credential field.
-pub const ACCOUNT_CLIENT_SECRET: &str = "client_secret";
+/// Logical identifier for the OAuth2 client_secret entry. This is the
+/// label / key used to look the entry up in the store; it is NOT the
+/// secret value itself.
+pub const KEY_CLIENT_SECRET: &str = "client_secret";
 
 #[derive(Debug)]
 pub enum StoreError {
@@ -28,14 +30,15 @@ impl std::error::Error for StoreError {}
 
 /// Abstract storage backend for sensitive credentials.
 ///
-/// `get` returns `Ok(None)` when the entry simply does not exist (a normal
-/// state during fallback to the next source). Backend-level failures must
-/// be surfaced as `Err` so callers can distinguish "not stored" from
-/// "store unreachable".
+/// `key` is the entry's identifier (e.g. "client_secret"), not the
+/// credential value. `get` returns `Ok(None)` when the entry simply does
+/// not exist (a normal state during fallback to the next source).
+/// Backend-level failures must be surfaced as `Err` so callers can
+/// distinguish "not stored" from "store unreachable".
 pub trait CredentialStore {
-    fn get(&self, account: &str) -> Result<Option<String>, StoreError>;
-    fn set(&self, account: &str, value: &str) -> Result<(), StoreError>;
-    fn delete(&self, account: &str) -> Result<(), StoreError>;
+    fn get(&self, key: &str) -> Result<Option<String>, StoreError>;
+    fn set(&self, key: &str, value: &str) -> Result<(), StoreError>;
+    fn delete(&self, key: &str) -> Result<(), StoreError>;
 }
 
 #[cfg(target_os = "macos")]
@@ -50,8 +53,10 @@ mod keychain {
             Self
         }
 
-        fn entry(account: &str) -> Result<Entry, StoreError> {
-            Entry::new(SERVICE, account).map_err(|e| StoreError::Backend(e.to_string()))
+        fn entry(key: &str) -> Result<Entry, StoreError> {
+            // The Keychain API names the second slot "account"; we use our
+            // logical key as the account string.
+            Entry::new(SERVICE, key).map_err(|e| StoreError::Backend(e.to_string()))
         }
     }
 
@@ -62,8 +67,8 @@ mod keychain {
     }
 
     impl CredentialStore for KeychainStore {
-        fn get(&self, account: &str) -> Result<Option<String>, StoreError> {
-            let entry = Self::entry(account)?;
+        fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
+            let entry = Self::entry(key)?;
             match entry.get_password() {
                 Ok(v) => Ok(Some(v)),
                 Err(keyring::Error::NoEntry) => Ok(None),
@@ -71,13 +76,13 @@ mod keychain {
             }
         }
 
-        fn set(&self, account: &str, value: &str) -> Result<(), StoreError> {
-            let entry = Self::entry(account)?;
+        fn set(&self, key: &str, value: &str) -> Result<(), StoreError> {
+            let entry = Self::entry(key)?;
             entry.set_password(value).map_err(classify_keyring_err)
         }
 
-        fn delete(&self, account: &str) -> Result<(), StoreError> {
-            let entry = Self::entry(account)?;
+        fn delete(&self, key: &str) -> Result<(), StoreError> {
+            let entry = Self::entry(key)?;
             match entry.delete_credential() {
                 Ok(()) => Ok(()),
                 Err(keyring::Error::NoEntry) => Ok(()),
@@ -151,20 +156,20 @@ pub mod test_support {
     }
 
     impl CredentialStore for MemoryStore {
-        fn get(&self, account: &str) -> Result<Option<String>, StoreError> {
-            Ok(self.inner.lock().unwrap().get(account).cloned())
+        fn get(&self, key: &str) -> Result<Option<String>, StoreError> {
+            Ok(self.inner.lock().unwrap().get(key).cloned())
         }
 
-        fn set(&self, account: &str, value: &str) -> Result<(), StoreError> {
+        fn set(&self, key: &str, value: &str) -> Result<(), StoreError> {
             self.inner
                 .lock()
                 .unwrap()
-                .insert(account.to_string(), value.to_string());
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
 
-        fn delete(&self, account: &str) -> Result<(), StoreError> {
-            self.inner.lock().unwrap().remove(account);
+        fn delete(&self, key: &str) -> Result<(), StoreError> {
+            self.inner.lock().unwrap().remove(key);
             Ok(())
         }
     }

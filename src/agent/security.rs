@@ -19,7 +19,7 @@ impl CommandWhitelist {
 
     /// Create a default whitelist allowing all mde resource commands.
     pub fn default_mde() -> Self {
-        let allowed = ["alerts", "incidents", "hunting", "machines"]
+        let allowed = ["alerts", "incidents", "hunting", "machines", "indicators"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -289,6 +289,7 @@ mod tests {
         assert!(wl.is_allowed("incidents"));
         assert!(wl.is_allowed("hunting"));
         assert!(wl.is_allowed("machines"));
+        assert!(wl.is_allowed("indicators"));
         assert!(!wl.is_allowed("unknown"));
         assert!(!wl.is_allowed(""));
     }

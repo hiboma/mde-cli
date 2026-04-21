@@ -104,4 +104,19 @@ impl MdeClient {
         .await?;
         response::check_response(response).await
     }
+
+    /// Send a DELETE request.
+    pub async fn delete(&self, path: &str) -> Result<reqwest::Response, AppError> {
+        let url = format!("{}{}", self.base_url, path);
+        let token = self.auth.token()?;
+        let response = retry::with_retry(|| async {
+            self.http
+                .delete(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .send()
+                .await
+        })
+        .await?;
+        response::check_response(response).await
+    }
 }

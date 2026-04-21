@@ -4,6 +4,7 @@ pub mod auth;
 pub mod credentials;
 pub mod hunting;
 pub mod incidents;
+pub mod indicators;
 pub mod machines;
 
 use clap::{Parser, Subcommand};
@@ -24,10 +25,11 @@ use crate::output::OutputFormat;
 {usage-heading} {name} [OPTIONS] [COMMAND]
 
 Resources:
-  alerts [alert]      Manage alerts
-  incidents [incident] Manage incidents
-  hunting [hunt]      Run advanced hunting queries
-  machines [machine]  Manage machines (devices)
+  alerts [alert]        Manage alerts
+  incidents [incident]  Manage incidents
+  hunting [hunt]        Run advanced hunting queries
+  machines [machine]    Manage machines (devices)
+  indicators [indicator] Manage indicators (exclusions/blocks)
 
 Authentication:
   auth               Authenticate and manage tokens
@@ -135,6 +137,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<machines::MachinesCommand>,
     },
+    /// Manage indicators (exclusions/blocks)
+    #[command(
+        subcommand_required = false,
+        arg_required_else_help = true,
+        visible_alias = "indicator",
+        hide = true
+    )]
+    Indicators {
+        #[command(subcommand)]
+        command: Option<indicators::IndicatorsCommand>,
+    },
     /// Manage the credential isolation agent
     #[command(subcommand_required = true, arg_required_else_help = true, hide = true)]
     Agent {
@@ -175,6 +188,7 @@ impl Commands {
             Commands::Incidents { .. } => "incidents",
             Commands::Hunting { .. } => "hunting",
             Commands::Machines { .. } => "machines",
+            Commands::Indicators { .. } => "indicators",
             Commands::Agent { .. } => "agent",
             Commands::Credentials { .. } => "credentials",
             Commands::Completion { .. } => "completion",

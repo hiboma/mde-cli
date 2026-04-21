@@ -119,6 +119,13 @@ where
             )?;
             crate::commands::machines::handle(&client, cmd, output_format, raw).await
         }
+        Commands::Indicators { command: Some(cmd) } => {
+            let client = build_mde_client(
+                mde_base_url,
+                "https://api.securitycenter.microsoft.com/.default",
+            )?;
+            crate::commands::indicators::handle(&client, cmd, output_format, raw).await
+        }
         _ => Ok(()),
     };
 

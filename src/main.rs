@@ -237,6 +237,13 @@ async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
             )?;
             mde::commands::machines::handle(&client, cmd, cli.output, cli.raw).await
         }
+        Commands::Indicators { command: Some(cmd) } => {
+            let client = build_mde_client(
+                &credentials.mde_base_url,
+                "https://api.securitycenter.microsoft.com/.default",
+            )?;
+            mde::commands::indicators::handle(&client, cmd, cli.output, cli.raw).await
+        }
         _ => {
             Cli::command()
                 .find_subcommand(command.name())
@@ -352,6 +359,7 @@ fn requires_agent_routing(command: &Commands) -> bool {
         Commands::Incidents { command } => command.is_some(),
         Commands::Hunting { command } => command.is_some(),
         Commands::Machines { command } => command.is_some(),
+        Commands::Indicators { command } => command.is_some(),
         Commands::Auth { command } => command.is_some(),
         Commands::Agent { .. } => false, // agent commands are handled separately
         Commands::Credentials { .. } => false, // handled locally

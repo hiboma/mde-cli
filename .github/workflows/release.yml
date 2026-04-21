@@ -70,10 +70,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
+
+      - uses: taiki-e/install-action@eea29cff9a2b68892c0845ae3e4f45fc47ee9354 # v2.75.13
+        with:
+          tool: cargo-cyclonedx@0.5.9
+
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --override-filename mde-cli-sbom
+          mv mde-cli-sbom.json artifacts/mde-cli-sbom.cdx.json
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
@@ -84,4 +97,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REF_NAME: ${{ github.ref_name }}
-        run: gh release create "$REF_NAME" artifacts/*.tar.gz --generate-notes
+        run: gh release create "$REF_NAME" artifacts/* --generate-notes

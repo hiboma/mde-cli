@@ -85,8 +85,14 @@ fn print_status(store: &dyn CredentialStore) -> Result<(), AppError> {
 }
 
 fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
-    let path = find_credentials_toml()
-        .ok_or_else(|| AppError::Config("no credentials.toml found to migrate from".to_string()))?;
+    let path = find_credentials_toml().ok_or_else(|| {
+        AppError::Config(
+            "no credentials.toml found to migrate from. \
+             To store a secret directly in the Keychain, run: \
+             mde-cli credentials set client-secret"
+                .to_string(),
+        )
+    })?;
     // Resolve to canonical path so the user sees what we will actually
     // mutate, not a relative path that could be interpreted as something
     // surprising (e.g. `.mde-credentials.toml` in cwd).
@@ -100,6 +106,11 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
         SecretScan::Present(s) => s,
         SecretScan::Absent => {
             println!("  client_secret: not present (nothing to migrate)");
+            println!();
+            println!(
+                "If you want to store a secret in the Keychain anyway, run: \
+                 mde-cli credentials set client-secret"
+            );
             return Ok(());
         }
         SecretScan::Unsupported(form) => {
@@ -117,12 +128,91 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
         return Ok(());
     }
 
-    // Confirm before mutating. Echo the canonical path again so a hostile
-    // cwd cannot smuggle in a different file between the find and the prompt.
-    print!(
-        "Migrate client_secret from {} to the credential store? [y/N]: ",
-        canonical.display()
-    );
+    // Step 1: confirm the migration itself. Echo the canonical path again
+    // so a hostile cwd cannot smuggle in a different file between the find
+    // and the prompt.
+    if !prompt_yes_no(
+        &format!(
+            "Migrate client_secret from {} to the credential store?",
+            canonical.display()
+        ),
+        false,
+    )? {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    // Step 2: write to the credential store first. We have not touched the
+    // toml yet, so any failure here leaves the user in their pre-migration
+    // state with no rollback needed.
+    store
+        .set(KEY_CLIENT_SECRET, &secret)
+        .map_err(|e| AppError::Config(format!("credential store: {}", e)))?;
+    println!("Stored client_secret in credential store");
+
+    // Step 3: ask how to dispose of the plaintext copy. The default is the
+    // safest option — fully remove it. Keeping a backup leaves a 0o600
+    // copy on disk that the user has to remember to delete; we surface
+    // that risk loudly when they choose to keep it.
+    let mode = prompt_disposal()?;
+    let updated = remove_client_secret_line(&original);
+
+    match mode {
+        DisposalMode::Remove => {
+            if let Err(e) = atomic_replace(&path, updated.as_bytes()) {
+                rollback_and_fail(store, &canonical, &e.to_string(), None)?;
+            }
+            println!("Removed client_secret line from {}", canonical.display());
+            println!();
+            println!("Done. The plaintext secret no longer exists on disk.");
+        }
+        DisposalMode::KeepBackup => {
+            // Create the backup BEFORE rewriting the original, so a failure
+            // partway through still leaves something recoverable. 0o600 +
+            // create_new ensures the backup is private and never clobbers
+            // an older one.
+            let backup = backup_path(&path);
+            if let Err(e) = write_secret_file(&backup, original.as_bytes(), true) {
+                rollback_and_fail(store, &canonical, &format!("{}", e), None)?;
+            }
+            if let Err(e) = atomic_replace(&path, updated.as_bytes()) {
+                // Try to remove the backup we just wrote, then roll back
+                // Keychain. The original toml is untouched.
+                let _ = fs::remove_file(&backup);
+                rollback_and_fail(store, &canonical, &e.to_string(), None)?;
+            }
+            println!(
+                "Removed client_secret line from {} (backup at {})",
+                canonical.display(),
+                backup.display()
+            );
+            println!();
+            println!(
+                "⚠️  WARNING: {} still contains the plaintext client_secret.",
+                backup.display()
+            );
+            println!("⚠️  This file defeats the purpose of moving the secret to the Keychain.");
+            println!("⚠️  Delete it as soon as you have confirmed the new setup works:");
+            println!("       rm {}", backup.display());
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum DisposalMode {
+    /// Remove the `client_secret` line outright; no plaintext copy remains.
+    Remove,
+    /// Keep a 0o600 backup of the original toml alongside the rewritten file.
+    KeepBackup,
+}
+
+/// Ask the user a yes/no question and return the parsed answer.
+/// `default_yes` controls what an empty (just-Enter) response means.
+fn prompt_yes_no(question: &str, default_yes: bool) -> Result<bool, AppError> {
+    let suffix = if default_yes { "[Y/n]" } else { "[y/N]" };
+    print!("{} {}: ", question, suffix);
     io::stdout()
         .flush()
         .map_err(|e| AppError::Config(format!("flush stdout: {}", e)))?;
@@ -130,58 +220,58 @@ fn migrate(store: &dyn CredentialStore, dry_run: bool) -> Result<(), AppError> {
     io::stdin()
         .read_line(&mut answer)
         .map_err(|e| AppError::Config(format!("read stdin: {}", e)))?;
-    if !matches!(answer.trim(), "y" | "Y" | "yes") {
-        println!("Aborted.");
-        return Ok(());
+    Ok(match answer.trim() {
+        "" => default_yes,
+        s => matches!(s, "y" | "Y" | "yes" | "Yes" | "YES"),
+    })
+}
+
+/// Ask the user how to dispose of the plaintext copy of `client_secret`
+/// after a successful Keychain write. Default is `Remove` — the safest
+/// option, since any copy left on disk re-introduces the risk we just
+/// migrated away from.
+fn prompt_disposal() -> Result<DisposalMode, AppError> {
+    if prompt_yes_no(
+        "Remove the plaintext client_secret line from credentials.toml? \
+         (Recommended. Choosing 'no' keeps a 0600 backup of the original on disk.)",
+        true,
+    )? {
+        Ok(DisposalMode::Remove)
+    } else {
+        Ok(DisposalMode::KeepBackup)
     }
+}
 
-    // Backup with restrictive permissions (0o600). `fs::copy` would inherit
-    // the source mode, which is commonly 0o644 — leaving the plaintext
-    // backup world-readable. Use create_new + 0o600 + manual byte copy.
-    let backup = backup_path(&path);
-    write_secret_file(&backup, original.as_bytes(), true)?;
-    println!("Backup written (mode 0600): {}", backup.display());
-
-    store
-        .set(KEY_CLIENT_SECRET, &secret)
-        .map_err(|e| AppError::Config(format!("credential store: {}", e)))?;
-    println!("Stored client_secret in credential store");
-
-    // Atomic rewrite: write to a sibling tempfile then rename(). If anything
-    // fails, the original file is untouched and we roll back the Keychain
-    // write so the user is not left in an inconsistent half-migrated state.
-    let updated = blank_client_secret(&original);
-    if let Err(e) = atomic_replace(&path, updated.as_bytes()) {
-        // Roll back the Keychain entry we just wrote, then surface a
-        // detailed error so the user knows where the secret lives now.
-        let rb = store.delete(KEY_CLIENT_SECRET);
-        let rb_msg = match rb {
-            Ok(()) => "credential store entry rolled back".to_string(),
-            Err(re) => format!(
-                "WARNING: failed to roll back credential store entry: {}",
-                re
-            ),
-        };
-        return Err(AppError::Config(format!(
-            "failed to update {}: {}. {}. The plaintext secret is still in {} and {}.",
-            canonical.display(),
-            e,
-            rb_msg,
-            canonical.display(),
-            backup.display(),
-        )));
-    }
-    println!("Cleared client_secret in {}", canonical.display());
-
-    println!();
-    println!(
-        "The backup at {} still contains the plaintext secret.",
-        backup.display()
-    );
-    println!("After verifying with `mde-cli credentials status`, delete it:");
-    println!("    rm {}", backup.display());
-
-    Ok(())
+/// Helper used when an atomic_replace / backup-write step fails after we
+/// have already written to the credential store. Rolls the Keychain entry
+/// back and returns a fully-formatted AppError so the call site can
+/// short-circuit with `?`.
+fn rollback_and_fail(
+    store: &dyn CredentialStore,
+    canonical: &Path,
+    cause: &str,
+    backup: Option<&Path>,
+) -> Result<(), AppError> {
+    let rb = store.delete(KEY_CLIENT_SECRET);
+    let rb_msg = match rb {
+        Ok(()) => "credential store entry rolled back".to_string(),
+        Err(re) => format!(
+            "WARNING: failed to roll back credential store entry: {}",
+            re
+        ),
+    };
+    let extra = match backup {
+        Some(p) => format!(" Backup at {} also contains the plaintext.", p.display()),
+        None => String::new(),
+    };
+    Err(AppError::Config(format!(
+        "failed to update {}: {}. {}. The plaintext secret is still in {}.{}",
+        canonical.display(),
+        cause,
+        rb_msg,
+        canonical.display(),
+        extra,
+    )))
 }
 
 /// Write `bytes` to `path` with mode 0o600. When `exclusive` is true, fails
@@ -326,21 +416,23 @@ fn extract_client_secret(content: &str) -> SecretScan {
     SecretScan::Absent
 }
 
-/// Replace `client_secret = "..."` with `client_secret = ""` while preserving
-/// the rest of the file (comments, ordering, other fields). Only a true
+/// Remove the `client_secret = "..."` line entirely while preserving the
+/// rest of the file (comments, ordering, other fields). Only a true
 /// `client_secret` key is matched — `client_secret_extra` and similar are
 /// left untouched.
-fn blank_client_secret(content: &str) -> String {
+///
+/// We delete the line rather than blanking the value because a blanked
+/// `client_secret = ""` is itself a footgun: a future reader might think
+/// the empty string is an intentional override and wonder where the real
+/// value lives. A missing key makes the toml's role as "non-secret config"
+/// unambiguous.
+fn remove_client_secret_line(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     for line in content.lines() {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("client_secret") {
             let after = rest.trim_start();
             if after.starts_with('=') {
-                let indent_len = line.len() - trimmed.len();
-                out.push_str(&line[..indent_len]);
-                out.push_str("client_secret = \"\"");
-                out.push('\n');
                 continue;
             }
         }
@@ -408,15 +500,19 @@ client_id = "c"
     }
 
     #[test]
-    fn blank_replaces_only_client_secret_line() {
+    fn remove_drops_only_client_secret_line() {
         let s = r#"# comment
 [credentials]
 tenant_id = "t"
 client_secret = "abc123"
 client_id = "c"
 "#;
-        let out = blank_client_secret(s);
-        assert!(out.contains("client_secret = \"\""));
+        let out = remove_client_secret_line(s);
+        assert!(
+            !out.contains("client_secret"),
+            "client_secret remained: {}",
+            out
+        );
         assert!(!out.contains("abc123"));
         assert!(out.contains("# comment"));
         assert!(out.contains("tenant_id = \"t\""));
@@ -424,16 +520,16 @@ client_id = "c"
     }
 
     #[test]
-    fn blank_preserves_indentation() {
-        let s = "  client_secret = \"x\"\n";
-        let out = blank_client_secret(s);
-        assert_eq!(out, "  client_secret = \"\"\n");
+    fn remove_works_with_indented_key() {
+        let s = "  client_secret = \"x\"\nother = 1\n";
+        let out = remove_client_secret_line(s);
+        assert_eq!(out, "other = 1\n");
     }
 
     #[test]
-    fn blank_does_not_touch_similarly_named_keys() {
+    fn remove_does_not_touch_similarly_named_keys() {
         let s = "client_secret_extra = \"x\"\n";
-        let out = blank_client_secret(s);
+        let out = remove_client_secret_line(s);
         assert_eq!(out, "client_secret_extra = \"x\"\n");
     }
 

@@ -10,6 +10,10 @@ pub enum MachinesCommand {
     Timeline(TimelineArgs),
     /// Get logon users for a machine
     LogonUsers(LogonUsersArgs),
+    /// Add a tag to a machine
+    AddTag(TagArgs),
+    /// Remove a tag from a machine
+    RemoveTag(TagArgs),
 }
 
 #[derive(Args)]
@@ -43,4 +47,13 @@ pub struct TimelineArgs {
 pub struct LogonUsersArgs {
     /// Machine ID
     pub id: String,
+}
+
+#[derive(Args)]
+pub struct TagArgs {
+    /// Machine ID (e.g. 1e5bc9d7e413ddd7902c2932e418702b84d0cc07)
+    pub id: String,
+
+    /// Tag value (case-sensitive; remove-tag must be called with the exact same value used to add)
+    pub value: String,
 }

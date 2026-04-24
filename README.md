@@ -7,7 +7,7 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 - **Alerts** - List, get, and update security alerts
 - **Incidents** - List, get, and update incidents (via Microsoft Graph API)
 - **Advanced Hunting** - Run KQL queries against the advanced hunting API
-- **Machines** - List, get machine details, view timelines and logon users
+- **Machines** - List, get machine details, view timelines and logon users, and manage device tags
 - **Indicators** - Create, list, and delete indicators (exclusions/blocks)
 - **Agent Mode** - Credential isolation for use with LLM agents (ssh-agent pattern)
 - **OAuth2 Authentication** - Browser login (Authorization Code Flow with PKCE) and client credentials
@@ -241,6 +241,10 @@ mde-cli machines list
 mde-cli machines get <machine-id>
 mde-cli machines timeline <machine-id>
 mde-cli machines logon-users <machine-id>
+
+# Manage device tags (case-sensitive; remove must use the exact same value)
+mde-cli machines add-tag <machine-id> <tag>
+mde-cli machines remove-tag <machine-id> <tag>
 ```
 
 ### Indicators

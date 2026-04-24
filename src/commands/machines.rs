@@ -14,6 +14,36 @@ pub async fn handle(
         MachinesCommand::Get(args) => get(client, args, output_format).await,
         MachinesCommand::Timeline(args) => timeline(client, args, output_format, raw).await,
         MachinesCommand::LogonUsers(args) => logon_users(client, args, output_format, raw).await,
+        MachinesCommand::AddTag(args) => update_tag(client, args, "Add", output_format).await,
+        MachinesCommand::RemoveTag(args) => update_tag(client, args, "Remove", output_format).await,
+    }
+}
+
+async fn update_tag(
+    client: &MdeClient,
+    args: &crate::cli::machines::TagArgs,
+    action: &str,
+    output_format: OutputFormat,
+) -> Result<(), AppError> {
+    if args.value.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "tag value must not be empty or whitespace-only".to_string(),
+        ));
+    }
+
+    let path = format!("/api/machines/{}/tags", args.id);
+    let body = serde_json::json!({
+        "Value": args.value,
+        "Action": action,
+    });
+
+    let resp: serde_json::Value = client.post(&path, &body).await?.json().await?;
+
+    match output_format {
+        OutputFormat::Json | OutputFormat::JsonMinify => {
+            crate::output::json::print_json_raw(&resp, output_format.is_minify())
+        }
+        OutputFormat::Table => crate::output::json::print_json_raw(&resp, false),
     }
 }
 

@@ -41,6 +41,11 @@ jobs:
 
       # cargo-zigbuild links musl targets via zig as the C toolchain, so both
       # x86_64 and aarch64 cross-compile without installing per-target gcc.
+      # cargo-zigbuild does NOT bundle zig, so zig must be installed separately.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        if: contains(matrix.target, 'linux-musl')
+        with:
+          version: 0.13.0
       - uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
         if: contains(matrix.target, 'linux-musl')
         with:

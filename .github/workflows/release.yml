@@ -15,10 +15,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          # Statically linked musl builds: no glibc dependency, so they run on
+          # any Linux regardless of the host glibc version (e.g. Ubuntu 22.04).
+          - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             artifact: mde-cli
-          - target: aarch64-unknown-linux-gnu
+          - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             artifact: mde-cli
           - target: x86_64-apple-darwin
@@ -37,14 +39,27 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+      # cargo-zigbuild links musl targets via zig as the C toolchain, so both
+      # x86_64 and aarch64 cross-compile without installing per-target gcc.
+      # cargo-zigbuild does NOT bundle zig, so zig must be installed separately.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        if: contains(matrix.target, 'linux-musl')
+        with:
+          version: 0.13.0
+          # Disable caching: release builds must not consume runtime caches
+          # that a less-trusted workflow could poison (supply-chain hardening).
+          use-cache: false
+      - uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
+        if: contains(matrix.target, 'linux-musl')
+        with:
+          tool: cargo-zigbuild@0.22.1
+
+      - name: Build (musl via zigbuild)
+        if: contains(matrix.target, 'linux-musl')
+        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
 
       - name: Build
+        if: ${{ !contains(matrix.target, 'linux-musl') }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package

@@ -46,6 +46,9 @@ jobs:
         if: contains(matrix.target, 'linux-musl')
         with:
           version: 0.13.0
+          # Disable caching: release builds must not consume runtime caches
+          # that a less-trusted workflow could poison (supply-chain hardening).
+          use-cache: false
       - uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2.81.1
         if: contains(matrix.target, 'linux-musl')
         with:

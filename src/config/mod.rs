@@ -220,7 +220,9 @@ impl MdeCredentials {
         let access_token = std::env::var("MDE_ACCESS_TOKEN").ok().or_else(|| {
             match read_secret_from_store(store, KEY_ACCESS_TOKEN) {
                 StoreLookup::Found(v) => Some(v),
-                _ => None,
+                StoreLookup::BackendError
+                | StoreLookup::SkipFallthrough
+                | StoreLookup::NotStored => None,
             }
         });
 
@@ -673,6 +675,47 @@ client_secret = "toml-secret"
             // Keychain empty -> falls through to TOML.
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert_eq!(creds.client_secret.as_deref(), Some("toml-secret"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_access_token_from_keychain() {
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            let store = credential_store::test_support::MemoryStore::new();
+            store
+                .set(credential_store::KEY_ACCESS_TOKEN, "kc-token")
+                .unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.access_token.as_deref(), Some("kc-token"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_access_token_env_overrides_keychain() {
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            unsafe { std::env::set_var("MDE_ACCESS_TOKEN", "env-token") };
+            let store = credential_store::test_support::MemoryStore::new();
+            store
+                .set(credential_store::KEY_ACCESS_TOKEN, "kc-token")
+                .unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.access_token.as_deref(), Some("env-token"));
+            unsafe { std::env::remove_var("MDE_ACCESS_TOKEN") };
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_access_token_none_when_keychain_empty() {
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            let store = credential_store::test_support::MemoryStore::new();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert!(creds.access_token.is_none());
         });
     }
 }

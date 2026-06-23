@@ -654,6 +654,7 @@ client_secret = "file-secret"
             client_id: Some("c".into()),
             client_secret: Some("super-secret".into()),
             access_token: Some("super-token".into()),
+            refresh_token: Some("super-refresh".into()),
             ..Default::default()
         };
         let dbg = format!("{:?}", creds);
@@ -663,6 +664,11 @@ client_secret = "file-secret"
             dbg
         );
         assert!(!dbg.contains("super-token"), "access_token leaked: {}", dbg);
+        assert!(
+            !dbg.contains("super-refresh"),
+            "refresh_token leaked: {}",
+            dbg
+        );
         assert!(dbg.contains("***"));
     }
 

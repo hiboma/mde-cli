@@ -8,7 +8,7 @@ use crate::config::credential_store::{
 };
 use crate::error::AppError;
 
-const MDE_SCOPE: &str = "https://api.securitycenter.microsoft.com/.default offline_access";
+pub const MDE_SCOPE: &str = "https://api.securitycenter.microsoft.com/.default offline_access";
 
 pub async fn handle(
     command: &AuthCommand,

@@ -242,13 +242,8 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
             &credentials.refresh_token,
         )
     {
-        match mde::auth::browser::refresh_access_token(
-            tid,
-            cid,
-            rt,
-            "https://api.securitycenter.microsoft.com/.default offline_access",
-        )
-        .await
+        match mde::auth::browser::refresh_access_token(tid, cid, rt, mde::commands::auth::MDE_SCOPE)
+            .await
         {
             Ok(result) => {
                 eprintln!(
@@ -259,7 +254,12 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
                 if let Some(ref new_rt) = result.refresh_token {
                     credentials.refresh_token = Some(new_rt.clone());
                 }
-                let _ = mde::commands::auth::save_tokens_to_keychain(&result);
+                if let Err(e) = mde::commands::auth::save_tokens_to_keychain(&result) {
+                    eprintln!(
+                        "warning: failed to save refreshed tokens to keychain: {}",
+                        e
+                    );
+                }
             }
             Err(e) => {
                 eprintln!("warning: token refresh failed: {}", e);

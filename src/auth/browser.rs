@@ -169,16 +169,22 @@ fn wait_for_auth_code(
 struct TokenResponse {
     access_token: String,
     expires_in: u64,
+    refresh_token: Option<String>,
 }
 
-/// Exchange the authorization code for an access token.
+pub struct BrowserLoginResult {
+    pub access_token: String,
+    pub expires_in: u64,
+    pub refresh_token: Option<String>,
+}
+
 async fn exchange_code(
     tenant_id: &str,
     client_id: &str,
     code: &str,
     verifier: &str,
     scope: &str,
-) -> Result<(String, u64), AppError> {
+) -> Result<BrowserLoginResult, AppError> {
     let redirect_uri = format!("http://localhost:{}{}", REDIRECT_PORT, REDIRECT_PATH);
     let token_url = format!(
         "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
@@ -216,7 +222,11 @@ async fn exchange_code(
         .await
         .map_err(|e| AppError::Auth(format!("failed to parse token response: {}", e)))?;
 
-    Ok((token_resp.access_token, token_resp.expires_in))
+    Ok(BrowserLoginResult {
+        access_token: token_resp.access_token,
+        expires_in: token_resp.expires_in,
+        refresh_token: token_resp.refresh_token,
+    })
 }
 
 /// Run the full browser-based OAuth2 authorization code flow with PKCE.
@@ -224,7 +234,7 @@ pub async fn browser_login(
     tenant_id: &str,
     client_id: &str,
     scope: &str,
-) -> Result<(String, u64), AppError> {
+) -> Result<BrowserLoginResult, AppError> {
     let (code, verifier) = tokio::task::spawn_blocking({
         let tenant_id = tenant_id.to_string();
         let client_id = client_id.to_string();

@@ -4,10 +4,9 @@ use std::fmt;
 /// Acts as a namespace so credentials do not collide with other apps.
 pub const SERVICE: &str = "dev.mde-cli";
 
-/// Logical identifier for the OAuth2 client_secret entry. This is the
-/// label / key used to look the entry up in the store; it is NOT the
-/// secret value itself.
 pub const KEY_CLIENT_SECRET: &str = "client_secret";
+pub const KEY_ACCESS_TOKEN: &str = "access_token";
+pub const KEY_REFRESH_TOKEN: &str = "refresh_token";
 
 #[derive(Debug)]
 pub enum StoreError {

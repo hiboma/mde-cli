@@ -230,13 +230,7 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
         let cid = credentials.client_id.as_deref().ok_or_else(|| {
             AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
         })?;
-        return mde::commands::auth::handle(
-            auth_cmd,
-            tid,
-            cid,
-            credentials.client_secret.as_deref(),
-        )
-        .await;
+        return mde::commands::auth::handle(auth_cmd, tid, cid).await;
     }
 
     // If the keychain access token is expired but a refresh token is available,

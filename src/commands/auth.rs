@@ -1,6 +1,7 @@
 use crate::auth::browser;
 use crate::auth::clipboard;
 use crate::cli::auth::AuthCommand;
+use crate::config::credential_store::{KEY_ACCESS_TOKEN, KEY_REFRESH_TOKEN, default_store};
 use crate::error::AppError;
 
 const MDE_SCOPE: &str = "https://api.securitycenter.microsoft.com/.default offline_access";
@@ -18,12 +19,27 @@ pub async fn handle(
 }
 
 async fn login(tenant_id: &str, client_id: &str) -> Result<(), AppError> {
-    let (token, expires_in) = browser::browser_login(tenant_id, client_id, MDE_SCOPE).await?;
+    let result = browser::browser_login(tenant_id, client_id, MDE_SCOPE).await?;
 
-    if clipboard::is_tty() {
-        clipboard::copy_and_verify(&token, expires_in)?;
+    if let Some(store) = default_store() {
+        store
+            .set(KEY_ACCESS_TOKEN, &result.access_token)
+            .map_err(|e| AppError::Auth(format!("failed to save access token: {}", e)))?;
+        eprintln!(
+            "Access token saved to keychain. (expires in {}s)",
+            result.expires_in
+        );
+
+        if let Some(ref rt) = result.refresh_token {
+            store
+                .set(KEY_REFRESH_TOKEN, rt)
+                .map_err(|e| AppError::Auth(format!("failed to save refresh token: {}", e)))?;
+            eprintln!("Refresh token saved to keychain.");
+        }
+    } else if clipboard::is_tty() {
+        clipboard::copy_and_verify(&result.access_token, result.expires_in)?;
     } else {
-        clipboard::print_token(&token);
+        clipboard::print_token(&result.access_token);
     }
 
     Ok(())

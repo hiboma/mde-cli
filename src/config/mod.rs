@@ -6,7 +6,8 @@ use serde::Deserialize;
 pub mod credential_store;
 
 use credential_store::{
-    CredentialStore, KEY_ACCESS_TOKEN, KEY_CLIENT_SECRET, StoreError, default_store,
+    CredentialStore, KEY_ACCESS_TOKEN, KEY_CLIENT_SECRET, KEY_REFRESH_TOKEN, KEY_TOKEN_EXPIRES_AT,
+    StoreError, default_store,
 };
 
 const DEFAULT_MDE_BASE_URL: &str = "https://api.security.microsoft.com";
@@ -48,6 +49,20 @@ enum StoreLookup {
     /// up a stale plaintext secret would defeat the point of moving the
     /// secret into the Keychain in the first place.
     BackendError,
+}
+
+fn is_token_expired(store: Option<&dyn CredentialStore>) -> bool {
+    match read_secret_from_store(store, KEY_TOKEN_EXPIRES_AT) {
+        StoreLookup::Found(v) => {
+            let expires_at: u64 = v.parse().unwrap_or(0);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            now >= expires_at
+        }
+        _ => true,
+    }
 }
 
 fn read_secret_from_store(store: Option<&dyn CredentialStore>, key: &str) -> StoreLookup {
@@ -131,6 +146,7 @@ pub struct MdeCredentials {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
     pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
     pub mde_base_url: String,
     pub graph_base_url: String,
 }
@@ -145,6 +161,7 @@ impl std::fmt::Debug for MdeCredentials {
             .field("client_id", &self.client_id)
             .field("client_secret", &mask(&self.client_secret))
             .field("access_token", &mask(&self.access_token))
+            .field("refresh_token", &mask(&self.refresh_token))
             .field("mde_base_url", &self.mde_base_url)
             .field("graph_base_url", &self.graph_base_url)
             .finish()
@@ -165,6 +182,7 @@ impl Default for MdeCredentials {
             client_id: None,
             client_secret: None,
             access_token: None,
+            refresh_token: None,
             mde_base_url: DEFAULT_MDE_BASE_URL.to_string(),
             graph_base_url: DEFAULT_GRAPH_BASE_URL.to_string(),
         }
@@ -219,12 +237,23 @@ impl MdeCredentials {
 
         let access_token = std::env::var("MDE_ACCESS_TOKEN").ok().or_else(|| {
             match read_secret_from_store(store, KEY_ACCESS_TOKEN) {
-                StoreLookup::Found(v) => Some(v),
+                StoreLookup::Found(v) => {
+                    if is_token_expired(store) {
+                        None
+                    } else {
+                        Some(v)
+                    }
+                }
                 StoreLookup::BackendError
                 | StoreLookup::SkipFallthrough
                 | StoreLookup::NotStored => None,
             }
         });
+
+        let refresh_token = match read_secret_from_store(store, KEY_REFRESH_TOKEN) {
+            StoreLookup::Found(v) => Some(v),
+            _ => None,
+        };
 
         let mde_base_url = file
             .mde_base_url
@@ -239,6 +268,7 @@ impl MdeCredentials {
             client_id,
             client_secret,
             access_token,
+            refresh_token,
             mde_base_url,
             graph_base_url,
         }
@@ -678,6 +708,22 @@ client_secret = "toml-secret"
         });
     }
 
+    fn future_expires_at() -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        (now + 3600).to_string()
+    }
+
+    fn past_expires_at() -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        (now.saturating_sub(60)).to_string()
+    }
+
     #[test]
     #[serial]
     fn test_resolve_access_token_from_keychain() {
@@ -687,8 +733,28 @@ client_secret = "toml-secret"
             store
                 .set(credential_store::KEY_ACCESS_TOKEN, "kc-token")
                 .unwrap();
+            store
+                .set(credential_store::KEY_TOKEN_EXPIRES_AT, &future_expires_at())
+                .unwrap();
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert_eq!(creds.access_token.as_deref(), Some("kc-token"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_access_token_expired_returns_none() {
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            let store = credential_store::test_support::MemoryStore::new();
+            store
+                .set(credential_store::KEY_ACCESS_TOKEN, "expired-token")
+                .unwrap();
+            store
+                .set(credential_store::KEY_TOKEN_EXPIRES_AT, &past_expires_at())
+                .unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert!(creds.access_token.is_none());
         });
     }
 
@@ -716,6 +782,20 @@ client_secret = "toml-secret"
             let store = credential_store::test_support::MemoryStore::new();
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert!(creds.access_token.is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_refresh_token_from_keychain() {
+        unsafe { clear_mde_env() };
+        with_isolated_credentials(|| {
+            let store = credential_store::test_support::MemoryStore::new();
+            store
+                .set(credential_store::KEY_REFRESH_TOKEN, "kc-refresh")
+                .unwrap();
+            let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
+            assert_eq!(creds.refresh_token.as_deref(), Some("kc-refresh"));
         });
     }
 }

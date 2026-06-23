@@ -248,6 +248,53 @@ pub async fn browser_login(
     exchange_code(tenant_id, client_id, &code, &verifier, scope).await
 }
 
+pub async fn refresh_access_token(
+    tenant_id: &str,
+    client_id: &str,
+    refresh_token: &str,
+    scope: &str,
+) -> Result<BrowserLoginResult, AppError> {
+    let token_url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+        tenant_id
+    );
+
+    let params = [
+        ("grant_type", "refresh_token"),
+        ("client_id", client_id),
+        ("refresh_token", refresh_token),
+        ("scope", scope),
+    ];
+
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(&token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| AppError::Auth(format!("token refresh failed: {}", e)))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::Auth(format!(
+            "token refresh returned {}: {}",
+            status, body
+        )));
+    }
+
+    let token_resp: TokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Auth(format!("failed to parse refresh response: {}", e)))?;
+
+    Ok(BrowserLoginResult {
+        access_token: token_resp.access_token,
+        expires_in: token_resp.expires_in,
+        refresh_token: token_resp.refresh_token,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

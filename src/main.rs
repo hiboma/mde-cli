@@ -167,7 +167,7 @@ fn main() {
     });
 }
 
-async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
+async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> {
     let command = match cli.command {
         Some(command) => command,
         None => {
@@ -237,6 +237,41 @@ async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
             credentials.client_secret.as_deref(),
         )
         .await;
+    }
+
+    // If the keychain access token is expired but a refresh token is available,
+    // try to refresh before building the API client.
+    if credentials.access_token.is_none()
+        && let (Some(tid), Some(cid), Some(rt)) = (
+            &credentials.tenant_id,
+            &credentials.client_id,
+            &credentials.refresh_token,
+        )
+    {
+        match mde::auth::browser::refresh_access_token(
+            tid,
+            cid,
+            rt,
+            "https://api.securitycenter.microsoft.com/.default offline_access",
+        )
+        .await
+        {
+            Ok(result) => {
+                eprintln!(
+                    "Access token refreshed. (expires in {}s)",
+                    result.expires_in
+                );
+                credentials.access_token = Some(result.access_token.clone());
+                if let Some(ref new_rt) = result.refresh_token {
+                    credentials.refresh_token = Some(new_rt.clone());
+                }
+                let _ = mde::commands::auth::save_tokens_to_keychain(&result);
+            }
+            Err(e) => {
+                eprintln!("warning: token refresh failed: {}", e);
+                eprintln!("Run `mde-cli auth login` to re-authenticate.");
+            }
+        }
     }
 
     // For API commands, build client with appropriate auth

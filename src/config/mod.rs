@@ -5,7 +5,9 @@ use serde::Deserialize;
 
 pub mod credential_store;
 
-use credential_store::{CredentialStore, KEY_CLIENT_SECRET, StoreError, default_store};
+use credential_store::{
+    CredentialStore, KEY_ACCESS_TOKEN, KEY_CLIENT_SECRET, StoreError, default_store,
+};
 
 const DEFAULT_MDE_BASE_URL: &str = "https://api.security.microsoft.com";
 const DEFAULT_GRAPH_BASE_URL: &str = "https://graph.microsoft.com";
@@ -215,7 +217,12 @@ impl MdeCredentials {
             }
         });
 
-        let access_token = std::env::var("MDE_ACCESS_TOKEN").ok();
+        let access_token = std::env::var("MDE_ACCESS_TOKEN").ok().or_else(|| {
+            match read_secret_from_store(store, KEY_ACCESS_TOKEN) {
+                StoreLookup::Found(v) => Some(v),
+                _ => None,
+            }
+        });
 
         let mde_base_url = file
             .mde_base_url

@@ -178,6 +178,45 @@ pub struct BrowserLoginResult {
     pub refresh_token: Option<String>,
 }
 
+async fn post_token_request(
+    tenant_id: &str,
+    params: &[(&str, &str)],
+    operation: &str,
+) -> Result<BrowserLoginResult, AppError> {
+    let token_url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+        tenant_id
+    );
+
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(&token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| AppError::Auth(format!("{} failed: {}", operation, e)))?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(AppError::Auth(format!(
+            "{} returned {}: {}",
+            operation, status, body
+        )));
+    }
+
+    let token_resp: TokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| AppError::Auth(format!("failed to parse {} response: {}", operation, e)))?;
+
+    Ok(BrowserLoginResult {
+        access_token: token_resp.access_token,
+        expires_in: token_resp.expires_in,
+        refresh_token: token_resp.refresh_token,
+    })
+}
+
 async fn exchange_code(
     tenant_id: &str,
     client_id: &str,
@@ -186,11 +225,6 @@ async fn exchange_code(
     scope: &str,
 ) -> Result<BrowserLoginResult, AppError> {
     let redirect_uri = format!("http://localhost:{}{}", REDIRECT_PORT, REDIRECT_PATH);
-    let token_url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant_id
-    );
-
     let params = [
         ("grant_type", "authorization_code"),
         ("client_id", client_id),
@@ -199,34 +233,7 @@ async fn exchange_code(
         ("code_verifier", verifier),
         ("scope", scope),
     ];
-
-    let http = reqwest::Client::new();
-    let resp = http
-        .post(&token_url)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| AppError::Auth(format!("token exchange failed: {}", e)))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::Auth(format!(
-            "token exchange returned {}: {}",
-            status, body
-        )));
-    }
-
-    let token_resp: TokenResponse = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Auth(format!("failed to parse token response: {}", e)))?;
-
-    Ok(BrowserLoginResult {
-        access_token: token_resp.access_token,
-        expires_in: token_resp.expires_in,
-        refresh_token: token_resp.refresh_token,
-    })
+    post_token_request(tenant_id, &params, "token exchange").await
 }
 
 /// Run the full browser-based OAuth2 authorization code flow with PKCE.
@@ -254,45 +261,13 @@ pub async fn refresh_access_token(
     refresh_token: &str,
     scope: &str,
 ) -> Result<BrowserLoginResult, AppError> {
-    let token_url = format!(
-        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-        tenant_id
-    );
-
     let params = [
         ("grant_type", "refresh_token"),
         ("client_id", client_id),
         ("refresh_token", refresh_token),
         ("scope", scope),
     ];
-
-    let http = reqwest::Client::new();
-    let resp = http
-        .post(&token_url)
-        .form(&params)
-        .send()
-        .await
-        .map_err(|e| AppError::Auth(format!("token refresh failed: {}", e)))?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        return Err(AppError::Auth(format!(
-            "token refresh returned {}: {}",
-            status, body
-        )));
-    }
-
-    let token_resp: TokenResponse = resp
-        .json()
-        .await
-        .map_err(|e| AppError::Auth(format!("failed to parse refresh response: {}", e)))?;
-
-    Ok(BrowserLoginResult {
-        access_token: token_resp.access_token,
-        expires_in: token_resp.expires_in,
-        refresh_token: token_resp.refresh_token,
-    })
+    post_token_request(tenant_id, &params, "token refresh").await
 }
 
 #[cfg(test)]

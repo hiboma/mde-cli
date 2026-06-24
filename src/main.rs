@@ -250,7 +250,10 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
                     "Access token refreshed. (expires in {}s)",
                     result.expires_in
                 );
-                match mde::commands::auth::save_tokens_to_keychain(&result) {
+                match mde::commands::auth::save_tokens_to_keychain(
+                    &result,
+                    credentials.refresh_token.as_deref(),
+                ) {
                     Ok(false) => {
                         eprintln!(
                             "warning: no credential store available. \
@@ -265,7 +268,8 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
                     }
                     Ok(true) => {}
                 }
-                credentials.refresh_token = result.refresh_token;
+                credentials.refresh_token =
+                    result.refresh_token.or(credentials.refresh_token.take());
                 credentials.access_token = Some(result.access_token);
             }
             Err(e) => {

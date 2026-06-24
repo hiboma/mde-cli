@@ -26,7 +26,10 @@ fn compute_expires_at(expires_in: u64) -> u64 {
     now + expires_in
 }
 
-pub fn save_tokens_to_keychain(result: &browser::BrowserLoginResult) -> Result<bool, AppError> {
+pub fn save_tokens_to_keychain(
+    result: &browser::BrowserLoginResult,
+    existing_refresh_token: Option<&str>,
+) -> Result<bool, AppError> {
     let Some(store) = default_store() else {
         return Ok(false);
     };
@@ -34,7 +37,10 @@ pub fn save_tokens_to_keychain(result: &browser::BrowserLoginResult) -> Result<b
     let bundle = TokenBundle {
         access_token: result.access_token.clone(),
         expires_at: compute_expires_at(result.expires_in),
-        refresh_token: result.refresh_token.clone(),
+        refresh_token: result
+            .refresh_token
+            .clone()
+            .or_else(|| existing_refresh_token.map(|s| s.to_string())),
     };
 
     let json = serde_json::to_string(&bundle)
@@ -55,7 +61,7 @@ pub fn save_tokens_to_keychain(result: &browser::BrowserLoginResult) -> Result<b
 async fn login(tenant_id: &str, client_id: &str) -> Result<(), AppError> {
     let result = browser::browser_login(tenant_id, client_id, MDE_SCOPE).await?;
 
-    let saved = save_tokens_to_keychain(&result)?;
+    let saved = save_tokens_to_keychain(&result, None)?;
     if !saved {
         if clipboard::is_tty() {
             clipboard::copy_and_verify(&result.access_token, result.expires_in)?;

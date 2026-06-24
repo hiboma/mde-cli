@@ -53,7 +53,8 @@ enum StoreLookup {
 fn resolve_token_bundle(store: Option<&dyn CredentialStore>) -> Option<TokenBundle> {
     match read_secret_from_store(store, KEY_TOKEN_BUNDLE) {
         StoreLookup::Found(v) => serde_json::from_str(&v).ok(),
-        _ => None,
+        StoreLookup::BackendError => None,
+        StoreLookup::SkipFallthrough | StoreLookup::NotStored => None,
     }
 }
 

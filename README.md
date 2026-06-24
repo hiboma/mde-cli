@@ -200,9 +200,6 @@ remove or replace the allowed-applications list.
 # Browser login (Authorization Code Flow with PKCE)
 mde-cli auth login
 
-# Show token for client_credentials flow (CI use)
-mde-cli auth token
-
 # Client credentials (non-interactive)
 export MDE_TENANT_ID="your-tenant-id"
 export MDE_CLIENT_ID="your-client-id"

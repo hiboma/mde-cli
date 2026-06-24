@@ -167,7 +167,7 @@ fn main() {
     });
 }
 
-async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
+async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> {
     let command = match cli.command {
         Some(command) => command,
         None => {
@@ -230,13 +230,58 @@ async fn run(cli: Cli, credentials: MdeCredentials) -> Result<(), AppError> {
         let cid = credentials.client_id.as_deref().ok_or_else(|| {
             AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
         })?;
-        return mde::commands::auth::handle(
-            auth_cmd,
-            tid,
-            cid,
-            credentials.client_secret.as_deref(),
+        return mde::commands::auth::handle(auth_cmd, tid, cid).await;
+    }
+
+    // If the keychain access token is expired but a refresh token is available,
+    // try to refresh before building the API client.
+    if credentials.access_token.is_none()
+        && let (Some(tid), Some(cid), Some(rt)) = (
+            &credentials.tenant_id,
+            &credentials.client_id,
+            &credentials.refresh_token,
         )
-        .await;
+    {
+        match mde::auth::browser::refresh_access_token(tid, cid, rt, mde::commands::auth::MDE_SCOPE)
+            .await
+        {
+            Ok(result) => {
+                eprintln!(
+                    "Access token refreshed. (expires in {}s)",
+                    result.expires_in
+                );
+                match mde::commands::auth::save_tokens_to_keychain(
+                    &result,
+                    credentials.refresh_token.as_deref(),
+                ) {
+                    Ok(false) => {
+                        eprintln!(
+                            "warning: no credential store available. \
+                             Refreshed token is valid for this session only."
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "warning: failed to save refreshed tokens to keychain: {}",
+                            e
+                        );
+                    }
+                    Ok(true) => {}
+                }
+                credentials.refresh_token =
+                    result.refresh_token.or(credentials.refresh_token.take());
+                credentials.access_token = Some(result.access_token);
+            }
+            Err(e) => {
+                eprintln!("warning: token refresh failed: {}", e);
+                if credentials.client_secret.is_none() {
+                    return Err(AppError::Auth(
+                        "Authentication expired. Run `mde-cli auth login` to re-authenticate."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
     }
 
     // For API commands, build client with appropriate auth

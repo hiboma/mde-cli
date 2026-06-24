@@ -4,10 +4,32 @@ use std::fmt;
 /// Acts as a namespace so credentials do not collide with other apps.
 pub const SERVICE: &str = "dev.mde-cli";
 
-/// Logical identifier for the OAuth2 client_secret entry. This is the
-/// label / key used to look the entry up in the store; it is NOT the
-/// secret value itself.
 pub const KEY_CLIENT_SECRET: &str = "client_secret";
+pub const KEY_TOKEN_BUNDLE: &str = "token_bundle";
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct TokenBundle {
+    pub access_token: String,
+    pub expires_at: u64,
+    pub refresh_token: Option<String>,
+}
+
+impl fmt::Debug for TokenBundle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TokenBundle")
+            .field("access_token", &"***")
+            .field("expires_at", &self.expires_at)
+            .field(
+                "refresh_token",
+                if self.refresh_token.is_some() {
+                    &"***"
+                } else {
+                    &"None"
+                },
+            )
+            .finish()
+    }
+}
 
 #[derive(Debug)]
 pub enum StoreError {

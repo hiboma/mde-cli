@@ -5,9 +5,14 @@ use std::fmt;
 pub const SERVICE: &str = "dev.mde-cli";
 
 pub const KEY_CLIENT_SECRET: &str = "client_secret";
-pub const KEY_ACCESS_TOKEN: &str = "access_token";
-pub const KEY_REFRESH_TOKEN: &str = "refresh_token";
-pub const KEY_TOKEN_EXPIRES_AT: &str = "token_expires_at";
+pub const KEY_TOKEN_BUNDLE: &str = "token_bundle";
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TokenBundle {
+    pub access_token: String,
+    pub expires_at: u64,
+    pub refresh_token: Option<String>,
+}
 
 #[derive(Debug)]
 pub enum StoreError {

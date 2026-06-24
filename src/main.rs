@@ -250,20 +250,30 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
                     "Access token refreshed. (expires in {}s)",
                     result.expires_in
                 );
-                credentials.access_token = Some(result.access_token.clone());
-                if let Some(ref new_rt) = result.refresh_token {
-                    credentials.refresh_token = Some(new_rt.clone());
+                match mde::commands::auth::save_tokens_to_keychain(&result) {
+                    Ok(false) => {
+                        eprintln!(
+                            "warning: no credential store available. \
+                             Refreshed token is valid for this session only."
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "warning: failed to save refreshed tokens to keychain: {}",
+                            e
+                        );
+                    }
+                    Ok(true) => {}
                 }
-                if let Err(e) = mde::commands::auth::save_tokens_to_keychain(&result) {
-                    eprintln!(
-                        "warning: failed to save refreshed tokens to keychain: {}",
-                        e
-                    );
-                }
+                credentials.refresh_token = result.refresh_token;
+                credentials.access_token = Some(result.access_token);
             }
             Err(e) => {
                 eprintln!("warning: token refresh failed: {}", e);
-                eprintln!("Run `mde-cli auth login` to re-authenticate.");
+                return Err(AppError::Auth(
+                    "Authentication expired. Run `mde-cli auth login` to re-authenticate."
+                        .to_string(),
+                ));
             }
         }
     }

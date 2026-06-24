@@ -270,10 +270,12 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
             }
             Err(e) => {
                 eprintln!("warning: token refresh failed: {}", e);
-                return Err(AppError::Auth(
-                    "Authentication expired. Run `mde-cli auth login` to re-authenticate."
-                        .to_string(),
-                ));
+                if credentials.client_secret.is_none() {
+                    return Err(AppError::Auth(
+                        "Authentication expired. Run `mde-cli auth login` to re-authenticate."
+                            .to_string(),
+                    ));
+                }
             }
         }
     }

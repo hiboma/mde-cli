@@ -35,6 +35,23 @@ cargo fmt                # Format
 - Uses `securitycenter` scope, same as alerts/machines
 - Registered in agent command whitelist (`agent/security.rs`)
 
+### Doctor
+
+- `doctor` subcommand prints a one-screen diagnostic: CONFIG (which
+  credentials.toml is in effect), ACTIVE CREDENTIALS (each field's
+  effective value and its source), ENVIRONMENT (MDE_* set/unset), and
+  CONNECTIVITY (a `GET /api/machines?$top=1` probe with elapsed time)
+- Never prints secret values: `client_secret`/`access_token`/`refresh_token`
+  show presence + source only; `client_id` is masked to its first 4 chars;
+  secret-bearing env vars show `(set, hidden)`
+- Provenance comes from `MdeCredentials::resolve_with_provenance` in
+  `config/mod.rs`, which mirrors `resolve` but records a `Source` per field.
+  `resolve_with_store` delegates to it and drops the metadata
+- Handled locally before the env scrub in `main.rs` (alongside
+  `credentials`/`completion`); does not route through the agent. It does not
+  forward `--tenant-id`/`--client-id` because clap merges those flags with
+  their env vars, which would misattribute the source
+
 ### Shared Mode
 
 - `mde-cli agent start --shared` writes session info to `~/.local/share/mde-cli/session.json`

@@ -11,6 +11,7 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 - **Indicators** - Create, list, and delete indicators (exclusions/blocks)
 - **Agent Mode** - Credential isolation for use with LLM agents (ssh-agent pattern)
 - **OAuth2 Authentication** - Browser login (Authorization Code Flow with PKCE) and client credentials
+- **Doctor** - Diagnose configuration, credential provenance, environment, and connectivity
 
 ## Installation
 
@@ -193,6 +194,60 @@ remove or replace the allowed-applications list.
 3. Create a client secret under **Certificates & secrets**
 
 ## Usage
+
+### Diagnostics (`doctor`)
+
+`mde-cli doctor` prints a one-screen diagnostic of your setup: which
+config file is in effect, the effective credentials and **where each one
+resolved from**, the state of the `MDE_*` environment variables, and a
+live connectivity probe. Run it first whenever something is not working.
+
+```bash
+mde-cli doctor
+```
+
+```text
+mde-cli 0.13.0
+
+CONFIG
+  path:    /Users/you/.config/mde/credentials.toml
+  status:  present
+
+ACTIVE CREDENTIALS
+  tenant-id:      11111111-2222-3333-...       (source: env MDE_TENANT_ID)
+  client-id:      abcd****                     (source: credentials.toml)
+  client-secret:  present                      (source: keychain dev.mde-cli/client_secret)
+  access-token:   present (expires in 42m)     (source: keychain dev.mde-cli/token_bundle)
+  refresh-token:  present                      (source: keychain dev.mde-cli/token_bundle)
+  mde-base-url:   https://api.security.microsoft.com
+  graph-base-url: https://graph.microsoft.com
+
+ENVIRONMENT
+  MDE_TENANT_ID          (set)
+  MDE_CLIENT_ID          (set)
+  MDE_CLIENT_SECRET      (set, hidden)
+  ...
+
+CONNECTIVITY
+  GET https://api.security.microsoft.com/api/machines?$top=1  ->  200 OK (243ms)
+```
+
+Security notes:
+
+- `doctor` **never prints a secret value.** `client_secret`,
+  `access_token`, and `refresh_token` are reported by presence and source
+  only. `client_id` is masked to its first four characters.
+- Secret-bearing environment variables (`MDE_CLIENT_SECRET`,
+  `MDE_ACCESS_TOKEN`, `MDE_AGENT_TOKEN`) are shown as `(set, hidden)` /
+  `(unset)` — never their value.
+- The connectivity probe sends the bearer token in the request but only
+  the HTTP status and elapsed time are printed. A `401`/`403` still
+  confirms the service was reached. The probe is `skipped` when no
+  credentials are available to build a client.
+
+> On macOS, `doctor` reads the Keychain to report token/secret
+> presence, so the standard Keychain access prompt may appear (see
+> [Notes on Keychain prompts](#notes-on-keychain-prompts)).
 
 ### Authentication
 

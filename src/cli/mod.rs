@@ -37,6 +37,7 @@ Authentication:
   credentials        Manage stored credentials (Keychain on macOS)
 
 Other:
+  doctor             Diagnose configuration, credentials, and connectivity
   completion         Generate shell completion script
   help               Print this message or the help of the given subcommand(s)
 
@@ -172,6 +173,9 @@ pub enum Commands {
         #[command(subcommand)]
         command: credentials::CredentialsCommand,
     },
+    /// Diagnose configuration, credentials, environment, and connectivity
+    #[command(hide = true)]
+    Doctor,
     /// Generate shell completion script
     #[command(hide = true)]
     Completion {
@@ -191,6 +195,7 @@ impl Commands {
             Commands::Indicators { .. } => "indicators",
             Commands::Agent { .. } => "agent",
             Commands::Credentials { .. } => "credentials",
+            Commands::Doctor => "doctor",
             Commands::Completion { .. } => "completion",
         }
     }

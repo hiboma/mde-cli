@@ -137,6 +137,79 @@ fn load_credentials_file() -> CredentialsFile {
     CredentialsFile::default()
 }
 
+/// Where a resolved credential value came from. Used by `doctor` to show
+/// the provenance of each field without ever printing the value itself.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// CLI argument (`--tenant-id`, `--client-id`).
+    CliArg,
+    /// Environment variable (e.g. `MDE_CLIENT_SECRET`).
+    Env(&'static str),
+    /// OS credential store (macOS Keychain), with the logical key.
+    Keychain(&'static str),
+    /// credentials.toml.
+    TomlFile,
+    /// No value resolved from any source.
+    None,
+}
+
+impl Source {
+    /// Human-readable provenance label for `doctor` output. Includes the
+    /// Keychain service so the user can locate the entry, but never the value.
+    pub fn label(&self) -> String {
+        match self {
+            Source::CliArg => "cli argument".to_string(),
+            Source::Env(var) => format!("env {}", var),
+            Source::Keychain(key) => {
+                format!("keychain {}/{}", credential_store::SERVICE, key)
+            }
+            Source::TomlFile => "credentials.toml".to_string(),
+            Source::None => "not set".to_string(),
+        }
+    }
+}
+
+/// A resolved credential value paired with the source it came from.
+#[derive(Clone)]
+pub struct Resolved<T> {
+    pub value: Option<T>,
+    pub source: Source,
+}
+
+impl<T> Resolved<T> {
+    fn found(value: T, source: Source) -> Self {
+        Self {
+            value: Some(value),
+            source,
+        }
+    }
+
+    fn none() -> Self {
+        Self {
+            value: None,
+            source: Source::None,
+        }
+    }
+}
+
+/// Provenance-tracked view of resolved credentials, used by `doctor`.
+/// Mirrors the resolution order of [`MdeCredentials::resolve`] but records
+/// which source supplied each field. Values are still held in memory; callers
+/// must mask secrets before display.
+#[derive(Clone)]
+pub struct CredentialProvenance {
+    pub tenant_id: Resolved<String>,
+    pub client_id: Resolved<String>,
+    pub client_secret: Resolved<String>,
+    pub access_token: Resolved<String>,
+    pub refresh_token: Resolved<String>,
+    /// Unix expiry (seconds) of the access token, only known when it came
+    /// from a Keychain TokenBundle.
+    pub access_token_expires_at: Option<u64>,
+    pub mde_base_url: String,
+    pub graph_base_url: String,
+}
+
 /// Resolved MDE credentials collected from CLI args, environment variables,
 /// the OS credential store (e.g. macOS Keychain), and credentials.toml.
 /// Once constructed, the process should unset the MDE_* environment variables so that
@@ -190,6 +263,23 @@ impl Default for MdeCredentials {
     }
 }
 
+/// Drop the provenance metadata, keeping only the resolved values. Lets the
+/// non-diagnostic code paths share the single resolution implementation in
+/// [`MdeCredentials::resolve_with_provenance`].
+impl From<CredentialProvenance> for MdeCredentials {
+    fn from(p: CredentialProvenance) -> Self {
+        Self {
+            tenant_id: p.tenant_id.value,
+            client_id: p.client_id.value,
+            client_secret: p.client_secret.value,
+            access_token: p.access_token.value,
+            refresh_token: p.refresh_token.value,
+            mde_base_url: p.mde_base_url,
+            graph_base_url: p.graph_base_url,
+        }
+    }
+}
+
 impl MdeCredentials {
     /// Resolve credentials from CLI args, environment variables, the OS
     /// credential store, and credentials.toml.
@@ -212,43 +302,84 @@ impl MdeCredentials {
         cli_client_id: Option<&str>,
         store: Option<&dyn CredentialStore>,
     ) -> Self {
+        Self::from(Self::resolve_with_provenance(
+            cli_tenant_id,
+            cli_client_id,
+            store,
+        ))
+    }
+
+    /// Resolve credentials while recording the source of each field.
+    ///
+    /// Uses the exact same priority order as [`Self::resolve_with_store`] so
+    /// that what `doctor` reports matches what the API client actually sees.
+    /// The returned struct still carries the secret values (callers that
+    /// display them, e.g. `doctor`, MUST mask first).
+    pub fn resolve_with_provenance(
+        cli_tenant_id: Option<&str>,
+        cli_client_id: Option<&str>,
+        store: Option<&dyn CredentialStore>,
+    ) -> CredentialProvenance {
         let file = load_credentials_file();
 
-        let tenant_id = cli_tenant_id
-            .map(String::from)
-            .or_else(|| std::env::var("MDE_TENANT_ID").ok())
-            .or(file.tenant_id);
+        let tenant_id = if let Some(v) = cli_tenant_id {
+            Resolved::found(v.to_string(), Source::CliArg)
+        } else if let Ok(v) = std::env::var("MDE_TENANT_ID") {
+            Resolved::found(v, Source::Env("MDE_TENANT_ID"))
+        } else if let Some(v) = file.tenant_id {
+            Resolved::found(v, Source::TomlFile)
+        } else {
+            Resolved::none()
+        };
 
-        let client_id = cli_client_id
-            .map(String::from)
-            .or_else(|| std::env::var("MDE_CLIENT_ID").ok())
-            .or(file.client_id);
+        let client_id = if let Some(v) = cli_client_id {
+            Resolved::found(v.to_string(), Source::CliArg)
+        } else if let Ok(v) = std::env::var("MDE_CLIENT_ID") {
+            Resolved::found(v, Source::Env("MDE_CLIENT_ID"))
+        } else if let Some(v) = file.client_id {
+            Resolved::found(v, Source::TomlFile)
+        } else {
+            Resolved::none()
+        };
 
-        let client_secret = std::env::var("MDE_CLIENT_SECRET").ok().or_else(|| {
+        let client_secret = if let Ok(v) = std::env::var("MDE_CLIENT_SECRET") {
+            Resolved::found(v, Source::Env("MDE_CLIENT_SECRET"))
+        } else {
             match read_secret_from_store(store, KEY_CLIENT_SECRET) {
-                StoreLookup::Found(v) => Some(v),
+                StoreLookup::Found(v) => Resolved::found(v, Source::Keychain(KEY_CLIENT_SECRET)),
                 // Backend failures: do NOT fall back to plaintext toml.
-                // Surface the missing secret to the caller, which will turn
-                // into a "client_secret not set" error from validate().
-                StoreLookup::BackendError => None,
+                StoreLookup::BackendError => Resolved::none(),
                 // Store skipped or empty: fall through to toml.
-                StoreLookup::SkipFallthrough | StoreLookup::NotStored => file.client_secret,
+                StoreLookup::SkipFallthrough | StoreLookup::NotStored => match file.client_secret {
+                    Some(v) => Resolved::found(v, Source::TomlFile),
+                    None => Resolved::none(),
+                },
             }
-        });
+        };
 
         let bundle = resolve_token_bundle(store);
 
-        let access_token = std::env::var("MDE_ACCESS_TOKEN").ok().or_else(|| {
-            bundle.as_ref().and_then(|b| {
+        let (access_token, access_token_expires_at) =
+            if let Ok(v) = std::env::var("MDE_ACCESS_TOKEN") {
+                // Env-supplied token: expiry is unknown to us.
+                (Resolved::found(v, Source::Env("MDE_ACCESS_TOKEN")), None)
+            } else if let Some(b) = bundle.as_ref() {
                 if is_bundle_expired(b) {
-                    None
+                    (Resolved::none(), Some(b.expires_at))
                 } else {
-                    Some(b.access_token.clone())
+                    (
+                        Resolved::found(b.access_token.clone(), Source::Keychain(KEY_TOKEN_BUNDLE)),
+                        Some(b.expires_at),
+                    )
                 }
-            })
-        });
+            } else {
+                (Resolved::none(), None)
+            };
 
-        let refresh_token = bundle.as_ref().and_then(|b| b.refresh_token.clone());
+        let refresh_token = match bundle.as_ref().and_then(|b| b.refresh_token.clone()) {
+            Some(v) => Resolved::found(v, Source::Keychain(KEY_TOKEN_BUNDLE)),
+            None => Resolved::none(),
+        };
 
         let mde_base_url = file
             .mde_base_url
@@ -258,12 +389,13 @@ impl MdeCredentials {
             .graph_base_url
             .unwrap_or_else(|| DEFAULT_GRAPH_BASE_URL.to_string());
 
-        Self {
+        CredentialProvenance {
             tenant_id,
             client_id,
             client_secret,
             access_token,
             refresh_token,
+            access_token_expires_at,
             mde_base_url,
             graph_base_url,
         }

@@ -64,15 +64,18 @@ fn main() {
     load_dotenv_excluding_mde_keys();
     let cli = Cli::parse();
 
-    // For subcommands that do not talk to the API (`credentials`,
-    // `completion`), skip resolve() entirely. resolve() may consult the
-    // OS credential store, which can prompt or fail with an ACL error;
-    // letting that noise leak into a `credentials status` invocation
-    // confuses the user — the whole point of `credentials status` is to
-    // tell them about the store, not to be polluted by it.
+    // For subcommands that do not talk to the API via the normal client
+    // path (`credentials`, `completion`, `doctor`), skip resolve() and the
+    // env scrub. resolve() may consult the OS credential store, which can
+    // prompt or fail with an ACL error; letting that noise leak into a
+    // `credentials status` invocation confuses the user. `doctor` resolves
+    // credentials itself (with provenance tracking) and reads MDE_* env
+    // vars directly, so it must run before the env scrub.
     if matches!(
         cli.command,
-        Some(Commands::Credentials { .. }) | Some(Commands::Completion { .. })
+        Some(Commands::Credentials { .. })
+            | Some(Commands::Completion { .. })
+            | Some(Commands::Doctor)
     ) {
         let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
         rt.block_on(async {
@@ -182,6 +185,21 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
         let bin_name = cmd.get_name().to_string();
         generate(*shell, &mut cmd, bin_name, &mut io::stdout());
         return Ok(());
+    }
+
+    // Handle doctor diagnostics. doctor resolves credentials itself (with
+    // provenance) and never routes through the agent; it reports on the
+    // local config/credentials/environment and probes connectivity.
+    //
+    // We deliberately do NOT forward cli.tenant_id / cli.client_id here.
+    // clap folds the `--tenant-id` flag and the `MDE_TENANT_ID` env var into
+    // the same field, so a forwarded value could not be attributed to its
+    // real source. doctor reads the environment itself to report an accurate
+    // provenance (env vs credentials.toml). The trade-off: a value supplied
+    // *only* via the `--tenant-id` flag (no env, no toml) is not reflected —
+    // an uncommon case for a diagnostic invocation.
+    if let Commands::Doctor = &command {
+        return mde::commands::doctor::handle().await;
     }
 
     // Handle credentials store management (does not require API credentials).
@@ -460,6 +478,7 @@ fn requires_agent_routing(command: &Commands) -> bool {
         Commands::Auth { command } => command.is_some(),
         Commands::Agent { .. } => false, // agent commands are handled separately
         Commands::Credentials { .. } => false, // handled locally
+        Commands::Doctor => false,       // handled locally
         Commands::Completion { .. } => false, // handled locally
     }
 }

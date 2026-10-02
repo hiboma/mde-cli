@@ -261,6 +261,12 @@ export MDE_CLIENT_ID="your-client-id"
 export MDE_CLIENT_SECRET="your-secret"
 ```
 
+If browser sign-in expires, run `mde-cli auth login` again and retry your
+command. When a client secret is configured, the CLI prints a notice and
+continues with application authentication instead. This uses the application's
+permissions rather than the signed-in user's permissions; the notice does not
+mean that the API request has failed or succeeded.
+
 ### Alerts
 
 ```bash

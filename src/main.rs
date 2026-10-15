@@ -251,10 +251,8 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
 
     // If the keychain access token is expired but a refresh token is available,
     // try to refresh before building the API client.
-    if !matches!(
-        &command,
-        Commands::Hunting { .. } | Commands::Incidents { .. }
-    ) && credentials.access_token.is_none()
+    if needs_mde_prerefresh(&command)
+        && credentials.access_token.is_none()
         && let (Some(tid), Some(cid), Some(rt)) = (
             &credentials.tenant_id,
             &credentials.client_id,
@@ -432,6 +430,14 @@ async fn route_through_agent_from_session(
     Ok(())
 }
 
+/// Graph commands resolve their own resource token without refreshing the MDE bundle first.
+fn needs_mde_prerefresh(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Hunting { .. } | Commands::Incidents { .. }
+    )
+}
+
 /// Check if a command has a subaction and should be routed through the agent.
 /// Commands without a subaction (e.g. `mde alerts`) only display help,
 /// which can be handled locally without agent involvement.
@@ -503,4 +509,63 @@ fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
     }
 
     (cmd_name, action, extra_args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_commands_skip_mde_prerefresh_with_or_without_subcommands() {
+        assert!(!needs_mde_prerefresh(&Commands::Hunting { command: None }));
+        assert!(!needs_mde_prerefresh(&Commands::Incidents {
+            command: None
+        }));
+        for args in [
+            vec![
+                "mde-cli",
+                "hunting",
+                "run",
+                "--query",
+                "DeviceInfo | take 1",
+            ],
+            vec!["mde-cli", "incidents", "list"],
+            vec!["mde-cli", "incidents", "get", "1"],
+            vec![
+                "mde-cli",
+                "incidents",
+                "update",
+                "1",
+                "--status",
+                "resolved",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(!needs_mde_prerefresh(&cli.command.unwrap()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn non_graph_commands_keep_mde_prerefresh_eligibility() {
+        for command in [
+            Commands::Alerts { command: None },
+            Commands::Machines { command: None },
+            Commands::Indicators { command: None },
+            Commands::Auth { command: None },
+        ] {
+            assert!(needs_mde_prerefresh(&command));
+        }
+        for args in [
+            vec!["mde-cli", "alerts", "list"],
+            vec!["mde-cli", "machines", "list"],
+            vec!["mde-cli", "indicators", "list"],
+            vec!["mde-cli", "agent", "status"],
+            vec!["mde-cli", "credentials", "status"],
+            vec!["mde-cli", "doctor"],
+            vec!["mde-cli", "completion", "zsh"],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(needs_mde_prerefresh(&cli.command.unwrap()), "{args:?}");
+        }
+    }
 }

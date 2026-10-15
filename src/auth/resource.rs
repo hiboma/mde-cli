@@ -63,6 +63,7 @@ fn check_audience(token: &str, scope: &str) -> Result<(), AppError> {
             &[
                 "https://api.securitycenter.microsoft.com",
                 "https://api.security.microsoft.com",
+                "https://securitycenter.onmicrosoft.com/windowsatpservice",
                 "fc780465-2017-40d4-a0c5-307022471b92",
             ],
         )
@@ -173,12 +174,33 @@ pub async fn build_mde_client(
     base_url: &str,
     scope: &str,
 ) -> Result<MdeClient, AppError> {
-    let auth = token_for_resource(credentials, scope, None).await?;
+    build_mde_client_with(
+        credentials,
+        base_url,
+        scope,
+        None,
+        default_store,
+        |message| eprintln!("{message}"),
+    )
+    .await
+}
+
+async fn build_mde_client_with(
+    credentials: &MdeCredentials,
+    base_url: &str,
+    scope: &str,
+    token_endpoint: Option<&str>,
+    store_factory: impl FnOnce() -> Option<Box<dyn CredentialStore>>,
+    mut warn: impl FnMut(&str),
+) -> Result<MdeClient, AppError> {
+    let auth = token_for_resource(credentials, scope, token_endpoint).await?;
     if let Some((previous, next)) = auth.refresh_rotation
-        && let Some(store) = default_store()
+        && let Some(store) = store_factory()
         && let Err(err) = persist_refresh_rotation(store.as_ref(), &previous, &next)
     {
-        eprintln!("warning: failed to save rotated refresh token: {}", err);
+        warn(&format!(
+            "warning: failed to save rotated refresh token: {err}"
+        ));
     }
     let provider: Box<dyn AuthProvider> = match auth.provider {
         ResourceProvider::Static(provider) => Box::new(provider),
@@ -410,5 +432,189 @@ mod tests {
         assert!(err.contains("administrator consent"));
         assert!(err.contains("invalid_grant"));
         mock.assert_async().await;
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingStore {
+        bundle: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+        fail_set: bool,
+    }
+
+    impl CredentialStore for RecordingStore {
+        fn get(
+            &self,
+            key: &str,
+        ) -> Result<Option<String>, crate::config::credential_store::StoreError> {
+            assert_eq!(key, KEY_TOKEN_BUNDLE);
+            Ok(self.bundle.lock().unwrap().clone())
+        }
+
+        fn set(
+            &self,
+            key: &str,
+            value: &str,
+        ) -> Result<(), crate::config::credential_store::StoreError> {
+            assert_eq!(key, KEY_TOKEN_BUNDLE);
+            if self.fail_set {
+                return Err(crate::config::credential_store::StoreError::Backend(
+                    "test write failure".into(),
+                ));
+            }
+            *self.bundle.lock().unwrap() = Some(value.into());
+            Ok(())
+        }
+
+        fn delete(&self, _: &str) -> Result<(), crate::config::credential_store::StoreError> {
+            panic!("client construction must not delete stored credentials");
+        }
+    }
+
+    #[tokio::test]
+    async fn client_builder_persists_rotation_and_continues_after_store_failure() {
+        let mut server = mockito::Server::new_async().await;
+        for fail_set in [false, true] {
+            let token = server.mock("POST", "/token")
+                .match_body(mockito::Matcher::UrlEncoded("scope".into(), GRAPH_SCOPE.into()))
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"access_token":"graph-access","expires_in":3600,"refresh_token":"new-refresh"}"#)
+                .create_async().await;
+            let api = server
+                .mock("GET", "/resource")
+                .match_header("authorization", "Bearer graph-access")
+                .with_status(200)
+                .with_body("success")
+                .create_async()
+                .await;
+            let store = RecordingStore {
+                fail_set,
+                ..Default::default()
+            };
+            *store.bundle.lock().unwrap() = Some(
+                r#"{"access_token":"mde-access","expires_at":12345,"refresh_token":"old-refresh"}"#
+                    .into(),
+            );
+            let mut warnings = Vec::new();
+            let client = build_mde_client_with(
+                &credentials(),
+                &server.url(),
+                GRAPH_SCOPE,
+                Some(&format!("{}/token", server.url())),
+                || Some(Box::new(store.clone())),
+                |message| warnings.push(message.to_owned()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                client.get("/resource").await.unwrap().text().await.unwrap(),
+                "success"
+            );
+            let bundle: TokenBundle =
+                serde_json::from_str(store.bundle.lock().unwrap().as_ref().unwrap()).unwrap();
+            assert_eq!(bundle.access_token, "mde-access");
+            assert_eq!(bundle.expires_at, 12345);
+            if fail_set {
+                assert_eq!(bundle.refresh_token.as_deref(), Some("old-refresh"));
+                assert_eq!(warnings.len(), 1);
+                assert!(warnings[0].contains("warning: failed to save rotated refresh token"));
+                assert!(warnings[0].contains("test write failure"));
+            } else {
+                assert_eq!(bundle.refresh_token.as_deref(), Some("new-refresh"));
+                assert!(warnings.is_empty());
+            }
+            token.assert_async().await;
+            api.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn client_builder_adds_permission_hints_only_for_graph() {
+        let mut server = mockito::Server::new_async().await;
+        for scope in [MDE_SCOPE, GRAPH_SCOPE] {
+            for status in [401, 403] {
+                let api = server
+                    .mock("GET", "/resource")
+                    .with_status(status)
+                    .with_body("permission denied")
+                    .create_async()
+                    .await;
+                let mut creds = credentials();
+                creds.refresh_token = None;
+                let client = build_mde_client_with(
+                    &creds,
+                    &server.url(),
+                    scope,
+                    None,
+                    || panic!("store must remain unopened without rotation"),
+                    |_| panic!("no warning expected"),
+                )
+                .await
+                .unwrap();
+                let error = client.get("/resource").await.unwrap_err().to_string();
+                assert_eq!(
+                    error.contains("ThreatHunting.Read.All"),
+                    scope == GRAPH_SCOPE
+                );
+                assert_eq!(
+                    error.contains("SecurityIncident.ReadWrite.All"),
+                    scope == GRAPH_SCOPE
+                );
+                if scope == MDE_SCOPE {
+                    assert_eq!(
+                        error,
+                        if status == 401 {
+                            "authentication error: authentication failed. Verify your credentials."
+                        } else {
+                            "API error (status 403): permission denied"
+                        }
+                    );
+                }
+                api.assert_async().await;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn legacy_mde_audience_is_accepted_only_for_mde() {
+        let mut server = mockito::Server::new_async().await;
+        let access_token = jwt("https://securitycenter.onmicrosoft.com/windowsatpservice".into());
+        let api = server
+            .mock("GET", "/resource")
+            .match_header("authorization", format!("Bearer {access_token}").as_str())
+            .with_status(200)
+            .create_async()
+            .await;
+        let mut creds = credentials();
+        creds.access_token = Some(access_token);
+        creds.refresh_token = None;
+        let client = build_mde_client_with(
+            &creds,
+            &server.url(),
+            MDE_SCOPE,
+            None,
+            || panic!("store must remain unopened without rotation"),
+            |_| panic!("no warning expected"),
+        )
+        .await
+        .unwrap();
+        client.get("/resource").await.unwrap();
+        let result = build_mde_client_with(
+            &creds,
+            &server.url(),
+            GRAPH_SCOPE,
+            None,
+            || panic!("store must remain unopened on audience mismatch"),
+            |_| panic!("no warning expected"),
+        )
+        .await;
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("Graph must reject the MDE token"),
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("cannot be used with Microsoft Graph")
+        );
+        api.assert_async().await;
     }
 }

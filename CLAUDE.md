@@ -27,6 +27,21 @@ cargo fmt                # Format
 - `src/config/` - Configuration file handling
 - `src/error.rs` - Error types
 
+### Resource-specific authentication
+
+- `src/auth/resource.rs` builds API clients for both CLI and agent dispatch.
+- Browser login stores an MDE token. `hunting` and `incidents` exchange the
+  refresh token for Graph scope on each request dispatch, without caching the
+  Graph access token or replacing the MDE access token/expiry in Keychain.
+- A rotated refresh token updates only the matching stored bundle’s refresh token.
+- Browser login requires Microsoft Graph delegated `ThreatHunting.Read.All`
+  for hunting and `SecurityIncident.ReadWrite.All` for incident read/update,
+  with administrator consent. Client-secret authentication uses application permissions.
+- JWT audience inspection is a diagnostic only; opaque tokens remain supported.
+- Graph 401/403 errors include permission and consent guidance.
+- Agent credentials remain a startup snapshot. Reloading rotated refresh tokens
+  and refreshing expired MDE tokens in the agent are deferred.
+
 ### Indicators
 
 - `indicators` subcommand manages MDE Indicators API (`/api/indicators`)

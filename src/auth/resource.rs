@@ -81,8 +81,13 @@ fn check_audience(token: &str, scope: &str) -> Result<(), AppError> {
     )))
 }
 
+enum ResourceProvider {
+    Static(StaticTokenAuth),
+    ClientCredentials(OAuth2Auth),
+}
+
 struct ResourceAuth {
-    provider: Box<dyn AuthProvider>,
+    provider: ResourceProvider,
     refresh_rotation: Option<(String, String)>,
 }
 
@@ -108,14 +113,14 @@ async fn token_for_resource(
         )))?;
         check_audience(&result.access_token, scope)?;
         return Ok(ResourceAuth {
-            provider: Box::new(StaticTokenAuth(result.access_token)),
+            provider: ResourceProvider::Static(StaticTokenAuth(result.access_token)),
             refresh_rotation: result.refresh_token.map(|new| (refresh_token.clone(), new)),
         });
     }
     if let Some(token) = &credentials.access_token {
         check_audience(token, scope)?;
         return Ok(ResourceAuth {
-            provider: Box::new(StaticTokenAuth(token.clone())),
+            provider: ResourceProvider::Static(StaticTokenAuth(token.clone())),
             refresh_rotation: None,
         });
     }
@@ -131,7 +136,7 @@ async fn token_for_resource(
         )
     })?;
     Ok(ResourceAuth {
-        provider: Box::new(OAuth2Auth::new(
+        provider: ResourceProvider::ClientCredentials(OAuth2Auth::new(
             tid.clone(),
             cid.clone(),
             secret.clone(),
@@ -175,7 +180,11 @@ pub async fn build_mde_client(
     {
         eprintln!("warning: failed to save rotated refresh token: {}", err);
     }
-    let client = MdeClient::new(base_url.to_owned(), auth.provider)?;
+    let provider: Box<dyn AuthProvider> = match auth.provider {
+        ResourceProvider::Static(provider) => Box::new(provider),
+        ResourceProvider::ClientCredentials(provider) => Box::new(provider),
+    };
+    let client = MdeClient::new(base_url.to_owned(), provider)?;
     Ok(if is_graph(scope) {
         client.with_graph_permissions_hint()
     } else {
@@ -252,7 +261,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(auth.provider.token().unwrap(), "mde-access");
+        let ResourceProvider::Static(provider) = auth.provider else {
+            panic!("expected a static resource token");
+        };
+        assert_eq!(provider.token().unwrap(), "mde-access");
         assert!(auth.refresh_rotation.is_none());
         mock.assert_async().await;
     }
@@ -277,7 +289,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(auth.provider.token().unwrap(), "graph-access");
+        let ResourceProvider::Static(provider) = auth.provider else {
+            panic!("expected a static resource token");
+        };
+        assert_eq!(provider.token().unwrap(), "graph-access");
         let store = MemoryStore::new();
         store
             .set(
@@ -313,7 +328,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(auth.provider.token().unwrap(), "graph-access");
+        let ResourceProvider::Static(provider) = auth.provider else {
+            panic!("expected a static resource token");
+        };
+        assert_eq!(provider.token().unwrap(), "graph-access");
         assert!(auth.refresh_rotation.is_none());
         mock.assert_async().await;
     }
@@ -338,7 +356,10 @@ mod tests {
         assert!(token_for_resource(&creds, GRAPH_SCOPE, None).await.is_err());
         creds.access_token = Some(jwt("https://graph.microsoft.com".into()));
         let auth = token_for_resource(&creds, GRAPH_SCOPE, None).await.unwrap();
-        assert_eq!(auth.provider.token().unwrap(), creds.access_token.unwrap());
+        let ResourceProvider::Static(provider) = auth.provider else {
+            panic!("expected a static resource token");
+        };
+        assert_eq!(provider.token().unwrap(), creds.access_token.unwrap());
     }
 
     #[tokio::test]
@@ -356,6 +377,10 @@ mod tests {
         ] {
             assert_eq!(client_credentials_scope(scope), expected);
             let auth = token_for_resource(&creds, scope, None).await.unwrap();
+            assert!(matches!(
+                auth.provider,
+                ResourceProvider::ClientCredentials(_)
+            ));
             assert!(auth.refresh_rotation.is_none());
         }
     }

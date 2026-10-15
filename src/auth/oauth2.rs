@@ -57,10 +57,19 @@ impl OAuth2Auth {
     }
 
     pub async fn fetch_token(&self) -> Result<String, AppError> {
-        self.fetch_token_at_url(&self.token_url()).await
+        self.fetch_token_with_endpoint(
+            #[cfg(test)]
+            &self.token_url(),
+        )
+        .await
     }
 
-    async fn fetch_token_at_url(&self, token_url: &str) -> Result<String, AppError> {
+    // Only unit tests can substitute a local mock endpoint. Production always
+    // constructs the HTTPS Entra endpoint from the tenant ID.
+    async fn fetch_token_with_endpoint(
+        &self,
+        #[cfg(test)] token_url: &str,
+    ) -> Result<String, AppError> {
         // Check cache
         if let Ok(guard) = self.cache.lock()
             && let Some(ref cached) = *guard
@@ -76,9 +85,12 @@ impl OAuth2Auth {
             ("scope", &self.scope),
         ];
 
-        let resp = self
-            .http
-            .post(token_url)
+        #[cfg(not(test))]
+        let request = self.http.post(self.token_url());
+        #[cfg(test)]
+        let request = self.http.post(token_url);
+
+        let resp = request
             .form(&params)
             .send()
             .await
@@ -183,7 +195,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                auth.fetch_token_at_url(&format!("{}/token", server.url()))
+                auth.fetch_token_with_endpoint(&format!("{}/token", server.url()))
                     .await
                     .unwrap(),
                 "app-token"

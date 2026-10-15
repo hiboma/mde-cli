@@ -205,6 +205,20 @@ See Microsoft’s permission requirements for
 and [incident updates](https://learn.microsoft.com/en-us/graph/api/security-incident-update?view=graph-rest-1.0).
 MDE permissions alone do not grant access to these Graph commands.
 
+Graph commands select credentials in this order:
+
+1. An explicit `MDE_ACCESS_TOKEN` takes precedence over the stored browser session.
+2. Otherwise, a stored refresh token is exchanged for a delegated Graph token,
+   even when a client secret is also configured. A failed exchange returns an
+   error; it does not fall back to client-secret authentication.
+3. Without a refresh token, an available access token is checked for the target
+   audience and used directly.
+4. When neither an access token nor a refresh token is available, the client
+   secret is used with application permissions.
+
+Configuring a client secret alongside browser login therefore does not switch
+Graph commands to application permissions.
+
 ## Usage
 
 ### Diagnostics (`doctor`)

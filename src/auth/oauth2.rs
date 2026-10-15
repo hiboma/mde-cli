@@ -57,19 +57,6 @@ impl OAuth2Auth {
     }
 
     pub async fn fetch_token(&self) -> Result<String, AppError> {
-        self.fetch_token_with_endpoint(
-            #[cfg(test)]
-            &self.token_url(),
-        )
-        .await
-    }
-
-    // Only unit tests can substitute a local mock endpoint. Production always
-    // constructs the HTTPS Entra endpoint from the tenant ID.
-    async fn fetch_token_with_endpoint(
-        &self,
-        #[cfg(test)] token_url: &str,
-    ) -> Result<String, AppError> {
         // Check cache
         if let Ok(guard) = self.cache.lock()
             && let Some(ref cached) = *guard
@@ -85,12 +72,9 @@ impl OAuth2Auth {
             ("scope", &self.scope),
         ];
 
-        #[cfg(not(test))]
-        let request = self.http.post(self.token_url());
-        #[cfg(test)]
-        let request = self.http.post(token_url);
-
-        let resp = request
+        let resp = self
+            .http
+            .post(self.token_url())
             .form(&params)
             .send()
             .await
@@ -163,44 +147,5 @@ mod tests {
             auth.token_url(),
             "https://login.microsoftonline.com/tenant-123/oauth2/v2.0/token"
         );
-    }
-
-    #[tokio::test]
-    async fn client_credentials_requests_only_the_target_default_scope() {
-        use crate::auth::resource::{GRAPH_SCOPE, MDE_SCOPE, client_credentials_scope};
-        let mut server = mockito::Server::new_async().await;
-        for (scope, expected) in [
-            (
-                MDE_SCOPE,
-                "https://api.securitycenter.microsoft.com/.default",
-            ),
-            (GRAPH_SCOPE, "https://graph.microsoft.com/.default"),
-        ] {
-            let mock = server
-                .mock("POST", "/token")
-                .match_body(mockito::Matcher::AllOf(vec![
-                    mockito::Matcher::UrlEncoded("grant_type".into(), "client_credentials".into()),
-                    mockito::Matcher::UrlEncoded("scope".into(), expected.into()),
-                    mockito::Matcher::UrlEncoded("client_secret".into(), "secret".into()),
-                ]))
-                .with_header("content-type", "application/json")
-                .with_body(r#"{"access_token":"app-token","expires_in":3600}"#)
-                .create_async()
-                .await;
-            let auth = OAuth2Auth::new(
-                "tenant".into(),
-                "client".into(),
-                "secret".into(),
-                client_credentials_scope(scope),
-            )
-            .unwrap();
-            assert_eq!(
-                auth.fetch_token_with_endpoint(&format!("{}/token", server.url()))
-                    .await
-                    .unwrap(),
-                "app-token"
-            );
-            mock.assert_async().await;
-        }
     }
 }

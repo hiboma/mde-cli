@@ -6,7 +6,7 @@ use crate::cli::auth::AuthCommand;
 use crate::config::credential_store::{KEY_TOKEN_BUNDLE, TokenBundle, default_store};
 use crate::error::AppError;
 
-pub const MDE_SCOPE: &str = "https://api.securitycenter.microsoft.com/.default offline_access";
+pub use crate::auth::resource::MDE_SCOPE;
 
 pub async fn handle(
     command: &AuthCommand,

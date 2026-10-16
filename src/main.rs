@@ -4,11 +4,9 @@ use std::io;
 use std::path::PathBuf;
 use std::process;
 
-use mde::auth::StaticTokenAuth;
-use mde::auth::oauth2::OAuth2Auth;
+use mde::auth::resource::{GRAPH_SCOPE, MDE_SCOPE, build_mde_client};
 use mde::cli::agent::AgentCommand;
 use mde::cli::{Cli, Commands};
-use mde::client::MdeClient;
 use mde::config::MdeCredentials;
 use mde::error::AppError;
 
@@ -253,7 +251,8 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
 
     // If the keychain access token is expired but a refresh token is available,
     // try to refresh before building the API client.
-    if credentials.access_token.is_none()
+    if needs_mde_prerefresh(&command)
+        && credentials.access_token.is_none()
         && let (Some(tid), Some(cid), Some(rt)) = (
             &credentials.tenant_id,
             &credentials.client_id,
@@ -302,64 +301,30 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
         }
     }
 
-    // For API commands, build client with appropriate auth
-    let build_mde_client = |base_url: &str, scope: &str| -> Result<MdeClient, AppError> {
-        if let Some(ref token) = credentials.access_token {
-            let auth = StaticTokenAuth(token.clone());
-            return MdeClient::new(base_url.to_string(), Box::new(auth));
-        }
-
-        let tid = credentials.tenant_id.as_ref().ok_or_else(|| {
-            AppError::Config("tenant_id not set. Use --tenant-id or MDE_TENANT_ID.".to_string())
-        })?;
-        let cid = credentials.client_id.as_ref().ok_or_else(|| {
-            AppError::Config("client_id not set. Use --client-id or MDE_CLIENT_ID.".to_string())
-        })?;
-        let cs = credentials.client_secret.as_ref().ok_or_else(|| {
-            AppError::Config(
-                "client_secret not set. Set MDE_CLIENT_SECRET env var or credentials.toml."
-                    .to_string(),
-            )
-        })?;
-
-        let auth = OAuth2Auth::new(tid.clone(), cid.clone(), cs.clone(), scope.to_string())?;
-        MdeClient::new(base_url.to_string(), Box::new(auth))
-    };
-
     match &command {
         Commands::Alerts { command: Some(cmd) } => {
-            let client = build_mde_client(
-                &credentials.mde_base_url,
-                "https://api.securitycenter.microsoft.com/.default",
-            )?;
+            let client =
+                build_mde_client(&credentials, &credentials.mde_base_url, MDE_SCOPE).await?;
             mde::commands::alerts::handle(&client, cmd, cli.output, cli.raw).await
         }
         Commands::Incidents { command: Some(cmd) } => {
-            let client = build_mde_client(
-                &credentials.graph_base_url,
-                "https://graph.microsoft.com/.default",
-            )?;
+            let client =
+                build_mde_client(&credentials, &credentials.graph_base_url, GRAPH_SCOPE).await?;
             mde::commands::incidents::handle(&client, cmd, cli.output, cli.raw).await
         }
         Commands::Hunting { command: Some(cmd) } => {
-            let client = build_mde_client(
-                &credentials.graph_base_url,
-                "https://graph.microsoft.com/.default",
-            )?;
+            let client =
+                build_mde_client(&credentials, &credentials.graph_base_url, GRAPH_SCOPE).await?;
             mde::commands::hunting::handle(&client, cmd, cli.output).await
         }
         Commands::Machines { command: Some(cmd) } => {
-            let client = build_mde_client(
-                &credentials.mde_base_url,
-                "https://api.securitycenter.microsoft.com/.default",
-            )?;
+            let client =
+                build_mde_client(&credentials, &credentials.mde_base_url, MDE_SCOPE).await?;
             mde::commands::machines::handle(&client, cmd, cli.output, cli.raw).await
         }
         Commands::Indicators { command: Some(cmd) } => {
-            let client = build_mde_client(
-                &credentials.mde_base_url,
-                "https://api.securitycenter.microsoft.com/.default",
-            )?;
+            let client =
+                build_mde_client(&credentials, &credentials.mde_base_url, MDE_SCOPE).await?;
             mde::commands::indicators::handle(&client, cmd, cli.output, cli.raw).await
         }
         _ => {
@@ -465,6 +430,14 @@ async fn route_through_agent_from_session(
     Ok(())
 }
 
+/// Graph commands resolve their own resource token without refreshing the MDE bundle first.
+fn needs_mde_prerefresh(command: &Commands) -> bool {
+    !matches!(
+        command,
+        Commands::Hunting { .. } | Commands::Incidents { .. }
+    )
+}
+
 /// Check if a command has a subaction and should be routed through the agent.
 /// Commands without a subaction (e.g. `mde alerts`) only display help,
 /// which can be handled locally without agent involvement.
@@ -536,4 +509,63 @@ fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
     }
 
     (cmd_name, action, extra_args)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_commands_skip_mde_prerefresh_with_or_without_subcommands() {
+        assert!(!needs_mde_prerefresh(&Commands::Hunting { command: None }));
+        assert!(!needs_mde_prerefresh(&Commands::Incidents {
+            command: None
+        }));
+        for args in [
+            vec![
+                "mde-cli",
+                "hunting",
+                "run",
+                "--query",
+                "DeviceInfo | take 1",
+            ],
+            vec!["mde-cli", "incidents", "list"],
+            vec!["mde-cli", "incidents", "get", "1"],
+            vec![
+                "mde-cli",
+                "incidents",
+                "update",
+                "1",
+                "--status",
+                "resolved",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(!needs_mde_prerefresh(&cli.command.unwrap()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn non_graph_commands_keep_mde_prerefresh_eligibility() {
+        for command in [
+            Commands::Alerts { command: None },
+            Commands::Machines { command: None },
+            Commands::Indicators { command: None },
+            Commands::Auth { command: None },
+        ] {
+            assert!(needs_mde_prerefresh(&command));
+        }
+        for args in [
+            vec!["mde-cli", "alerts", "list"],
+            vec!["mde-cli", "machines", "list"],
+            vec!["mde-cli", "indicators", "list"],
+            vec!["mde-cli", "agent", "status"],
+            vec!["mde-cli", "credentials", "status"],
+            vec!["mde-cli", "doctor"],
+            vec!["mde-cli", "completion", "zsh"],
+        ] {
+            let cli = Cli::try_parse_from(&args).unwrap();
+            assert!(needs_mde_prerefresh(&cli.command.unwrap()), "{args:?}");
+        }
+    }
 }

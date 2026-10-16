@@ -188,10 +188,36 @@ remove or replace the allowed-applications list.
 | `Alert.Read.All` | Application | Read alerts |
 | `Machine.Read.All` | Application | Read machine info |
 | `ThreatHunting.Read.All` | Application | Run advanced hunting queries (Graph API) |
-| `Incident.Read.All` | Delegated | Read incidents (Graph API) |
+| `SecurityIncident.ReadWrite.All` | Application | Read and update incidents (Graph API) |
 | `Ti.ReadWrite` | Application | Manage indicators (create/delete) |
 
-3. Create a client secret under **Certificates & secrets**
+3. Grant administrator consent for the configured permissions.
+4. For client-secret authentication, create a client secret under **Certificates & secrets**.
+
+For browser login (`mde-cli auth login`), add Microsoft Graph **delegated**
+permissions and grant administrator consent:
+
+- `ThreatHunting.Read.All` for `hunting`.
+- `SecurityIncident.ReadWrite.All` for `incidents` (read and update).
+
+See Microsoft’s permission requirements for
+[advanced hunting](https://learn.microsoft.com/en-us/graph/api/security-security-runhuntingquery?view=graph-rest-1.0)
+and [incident updates](https://learn.microsoft.com/en-us/graph/api/security-incident-update?view=graph-rest-1.0).
+MDE permissions alone do not grant access to these Graph commands.
+
+Graph commands select credentials in this order:
+
+1. An explicit `MDE_ACCESS_TOKEN` takes precedence over the stored browser session.
+2. Otherwise, a stored refresh token is exchanged for a delegated Graph token,
+   even when a client secret is also configured. A failed exchange returns an
+   error; it does not fall back to client-secret authentication.
+3. Without a refresh token, an available access token is checked for the target
+   audience and used directly.
+4. When neither an access token nor a refresh token is available, the client
+   secret is used with application permissions.
+
+Configuring a client secret alongside browser login therefore does not switch
+Graph commands to application permissions.
 
 ## Usage
 
@@ -361,6 +387,24 @@ mde-cli alerts list --raw
 |---|---|---|
 | `alerts`, `machines`, `indicators` | `https://api.security.microsoft.com` | `https://api.securitycenter.microsoft.com/.default` |
 | `hunting`, `incidents` | `https://graph.microsoft.com` | `https://graph.microsoft.com/.default` |
+
+After browser login, `hunting` and `incidents` exchange the refresh token for
+a Graph access token on each invocation, including when dispatched through the
+agent. The Graph access token is not cached and does not replace the MDE access
+token in Keychain; only a rotated refresh token is updated when the stored
+refresh token still matches the one used for the exchange.
+
+The agent still holds its startup credentials: it does not reload rotated
+refresh tokens or refresh expired MDE tokens. Restart the agent after logging
+in again or if its refresh token becomes invalid. Subsequent rotations from an
+already-running agent may not be persisted once the stored token has changed.
+
+When using `MDE_ACCESS_TOKEN`, supply a token for the command’s target resource.
+This explicit token takes precedence over the stored browser session; its
+refresh token is not used.
+A readable JWT with a different audience is rejected with a diagnostic; opaque
+tokens are sent as before. Audience inspection does not verify signatures or
+grant authorization; the API validates the token.
 
 ## License
 

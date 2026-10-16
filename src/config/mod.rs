@@ -376,9 +376,15 @@ impl MdeCredentials {
                 (Resolved::none(), None)
             };
 
-        let refresh_token = match bundle.as_ref().and_then(|b| b.refresh_token.clone()) {
-            Some(v) => Resolved::found(v, Source::Keychain(KEY_TOKEN_BUNDLE)),
-            None => Resolved::none(),
+        // An explicit access token must not switch to a stored browser session
+        // when a Graph command resolves its resource-specific token.
+        let refresh_token = if access_token.source == Source::Env("MDE_ACCESS_TOKEN") {
+            Resolved::none()
+        } else {
+            match bundle.as_ref().and_then(|b| b.refresh_token.clone()) {
+                Some(v) => Resolved::found(v, Source::Keychain(KEY_TOKEN_BUNDLE)),
+                None => Resolved::none(),
+            }
         };
 
         let mde_base_url = file
@@ -905,9 +911,12 @@ client_secret = "toml-secret"
         with_isolated_credentials(|| {
             unsafe { std::env::set_var("MDE_ACCESS_TOKEN", "env-token") };
             let store = credential_store::test_support::MemoryStore::new();
-            store_token_bundle(&store, "kc-token", future_expires_at(), None);
+            store_token_bundle(&store, "kc-token", future_expires_at(), Some("kc-refresh"));
             let creds = MdeCredentials::resolve_with_store(None, None, Some(&store));
             assert_eq!(creds.access_token.as_deref(), Some("env-token"));
+            assert!(creds.refresh_token.is_none());
+            let provenance = MdeCredentials::resolve_with_provenance(None, None, Some(&store));
+            assert_eq!(provenance.refresh_token.source, Source::None);
             unsafe { std::env::remove_var("MDE_ACCESS_TOKEN") };
         });
     }

@@ -14,7 +14,5 @@
 /Cargo.toml                @hiboma
 /Cargo.lock                @hiboma
 
-# Authentication (OAuth2, device flow, browser login) and the
-# credential isolation agent that brokers access tokens.
+# Authentication (OAuth2, device flow, browser login).
 /src/auth/                 @hiboma
-/src/agent/                @hiboma

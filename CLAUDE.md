@@ -21,7 +21,6 @@ cargo fmt                # Format
 - `src/commands/` - Command handlers (business logic)
 - `src/client/` - HTTP client with retry logic
 - `src/auth/` - OAuth2, device code flow, browser-based auth
-- `src/agent/` - Credential isolation agent (ssh-agent pattern)
 - `src/models/` - API response models
 - `src/output/` - Output formatters (JSON, table)
 - `src/config/` - Configuration file handling
@@ -29,7 +28,7 @@ cargo fmt                # Format
 
 ### Resource-specific authentication
 
-- `src/auth/resource.rs` builds API clients for both CLI and agent dispatch.
+- `src/auth/resource.rs` builds API clients for CLI commands.
 - Browser login stores an MDE token. `hunting` and `incidents` exchange the
   refresh token for Graph scope on each invocation, without caching the
   Graph access token or replacing the MDE access token/expiry in Keychain.
@@ -45,8 +44,6 @@ cargo fmt                # Format
   used only when neither token is available.
 - JWT audience inspection is a diagnostic only; opaque tokens remain supported.
 - Graph 401/403 errors include permission and consent guidance.
-- Agent credentials remain a startup snapshot. Reloading rotated refresh tokens
-  and refreshing expired MDE tokens in the agent are deferred.
 
 ### Indicators
 
@@ -54,7 +51,6 @@ cargo fmt                # Format
 - Supports `list`, `create`, `delete` operations
 - `create` accepts indicatorType (FileSha256, FileSha1, FileMd5, CertificateThumbprint, IpAddress, DomainName, Url) and action (Allowed, Alert, AlertAndBlock, Block)
 - Uses `securitycenter` scope, same as alerts/machines
-- Registered in agent command whitelist (`agent/security.rs`)
 
 ### Doctor
 
@@ -69,18 +65,9 @@ cargo fmt                # Format
   `config/mod.rs`, which mirrors `resolve` but records a `Source` per field.
   `resolve_with_store` delegates to it and drops the metadata
 - Handled locally before the env scrub in `main.rs` (alongside
-  `credentials`/`completion`); does not route through the agent. It does not
+  `credentials`/`completion`). It does not
   forward `--tenant-id`/`--client-id` because clap merges those flags with
   their env vars, which would misattribute the source
-
-### Shared Mode
-
-- `mde-cli agent start --shared` writes session info to `~/.local/share/mde-cli/session.json`
-- No `eval` needed; any terminal can auto-detect the agent via session file
-- Session leader monitoring is disabled; no idle timeout
-- Duplicate start is detected via socket connection check ("already started")
-- `--no-agent` flag forces direct API mode, skipping agent auto-detection
-- Priority: `--no-agent` > `MDE_AGENT_TOKEN` env > session.json > direct mode
 
 ## Code Style
 

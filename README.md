@@ -20,6 +20,34 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 cargo install --path .
 ```
 
+### Verify release artifacts
+
+Releases produced by the reusable `release-build.yml` workflow include GitHub
+artifact attestations for all four binary archives and the CycloneDX SBOM.
+Before extracting or running an archive, verify its provenance with the GitHub
+CLI. Set `tag` and `commit` to the release tag and full commit SHA you expect
+from a trusted source:
+
+```bash
+tag=vX.Y.Z
+commit=FULL_EXPECTED_COMMIT_SHA
+artifact=mde-cli-aarch64-apple-darwin.tar.gz
+
+gh release download "$tag" --repo hiboma/mde-cli --pattern "$artifact"
+gh attestation verify "$artifact" \
+  --repo hiboma/mde-cli \
+  --source-ref "refs/tags/$tag" \
+  --source-digest "$commit" \
+  --signer-digest "$commit" \
+  --signer-workflow hiboma/mde-cli/.github/workflows/release-build.yml \
+  --deny-self-hosted-runners
+```
+
+The same check works for `mde-cli-sbom.cdx.json`. Older releases signed by
+`release.yml` do not satisfy this new signer policy. An attestation establishes
+origin and integrity; it does not prove that the software is vulnerability-free
+or that rebuilding produces identical bytes.
+
 ### Build from source
 
 ```bash

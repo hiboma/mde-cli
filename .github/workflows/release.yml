@@ -30,11 +30,11 @@ jobs:
             os: macos-latest
             artifact: mde-cli
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -42,14 +42,14 @@ jobs:
       # cargo-zigbuild links musl targets via zig as the C toolchain, so both
       # x86_64 and aarch64 cross-compile without installing per-target gcc.
       # cargo-zigbuild does NOT bundle zig, so zig must be installed separately.
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+      - uses: mlugg/setup-zig@v2.2.1
         if: contains(matrix.target, 'linux-musl')
         with:
           version: 0.13.0
           # Disable caching: release builds must not consume runtime caches
           # that a less-trusted workflow could poison (supply-chain hardening).
           use-cache: false
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@v2.82.2
         if: contains(matrix.target, 'linux-musl')
         with:
           tool: cargo-zigbuild@0.23.0
@@ -67,7 +67,7 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar czf ../../../mde-cli-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: mde-cli-${{ matrix.target }}
           path: mde-cli-${{ matrix.target }}.tar.gz
@@ -81,19 +81,19 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
 
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@v2.82.2
         with:
           tool: cargo-cyclonedx@0.5.9
 
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@v8.0.1
         with:
           path: artifacts
           merge-multiple: true
@@ -104,7 +104,7 @@ jobs:
           mv mde-cli-sbom.json artifacts/mde-cli-sbom.cdx.json
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@v4.1.0
         with:
           subject-path: artifacts/*.tar.gz
 

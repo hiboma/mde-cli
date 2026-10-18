@@ -14,37 +14,37 @@ jobs:
     name: Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.1
       - run: cargo check --all-targets --locked
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.1
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: rustfmt
@@ -57,23 +57,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # stable
+      - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@v2.9.1
       - run: cargo test --locked
 
   audit:
     name: Security audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@v2.82.2
         with:
           tool: cargo-audit@0.22.1
       - run: cargo audit
@@ -82,10 +82,10 @@ jobs:
     name: Dependency policy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@v2.82.2
         with:
           tool: cargo-deny@0.19.0
       - run: cargo deny check
@@ -94,10 +94,10 @@ jobs:
     name: Lint workflows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: reviewdog/action-actionlint@6fb7acc99f4a1008869fa8a0f09cfca740837d9d # v1.72.0
+      - uses: reviewdog/action-actionlint@v1.72.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           reporter: github-pr-review
@@ -106,34 +106,36 @@ jobs:
     name: Analyze workflows
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2.82.2
+      - uses: taiki-e/install-action@v2.82.2
         with:
           tool: zizmor@1.24.0
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: zizmor --min-severity medium .
+        run: zizmor --config .github/zizmor.yml --min-severity medium .
 
-  pinact:
+  actions-lock:
+    # Preserve the required status-check name configured in the repository ruleset.
     name: Pin actions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
-      - name: Install pinact
+      - name: Install actions-lock
         env:
-          PINACT_VERSION: 3.9.0
-          PINACT_SHA256: 3829da718de38b1e914b974c3e77045a256999af84789437a7305b09130d8a6a
+          ACTIONS_LOCK_VERSION: 0.2.0
+          ACTIONS_LOCK_SHA256: 79ec84c191667fd935a277e6fd3662cf5d3669cccc9e99998731d8f306f373b6
         run: |
           set -euo pipefail
-          curl -fsSL "https://github.com/suzuki-shunsuke/pinact/releases/download/v${PINACT_VERSION}/pinact_linux_amd64.tar.gz" -o pinact.tar.gz
-          echo "${PINACT_SHA256}  pinact.tar.gz" | sha256sum -c -
-          tar xf pinact.tar.gz pinact
-          sudo mv pinact /usr/local/bin/pinact
-      - name: Verify actions are pinned
+          mkdir -p "${RUNNER_TEMP}/actions-lock"
+          curl -fsSL "https://github.com/github/gh-actions-lock/releases/download/v${ACTIONS_LOCK_VERSION}/linux-amd64" -o "${RUNNER_TEMP}/actions-lock/gh-actions-lock"
+          echo "${ACTIONS_LOCK_SHA256}  ${RUNNER_TEMP}/actions-lock/gh-actions-lock" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/actions-lock/gh-actions-lock"
+          echo "${RUNNER_TEMP}/actions-lock" >> "$GITHUB_PATH"
+      - name: Verify all workflow dependencies
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pinact run --verify --check
+          GH_TOKEN: ${{ github.token }}
+        run: gh-actions-lock --verify

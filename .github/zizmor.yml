@@ -1,0 +1,9 @@
+rules:
+  unpinned-uses:
+    # These workflows pin direct and transitive actions in actions.lock.
+    # CI verifies the lockfile online with gh-actions-lock --verify.
+    # Keep this list scoped: new workflows still require onboarding.
+    ignore:
+      - ci.yml
+      - release.yml
+      - scorecard.yml

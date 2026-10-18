@@ -117,7 +117,8 @@ jobs:
         run: zizmor --config .github/zizmor.yml --min-severity medium .
 
   actions-lock:
-    name: Verify workflow lockfile
+    # Preserve the required status-check name configured in the repository ruleset.
+    name: Pin actions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2

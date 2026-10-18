@@ -98,8 +98,8 @@ cargo fmt                # Format
   zizmor --config .github/zizmor.yml --min-severity medium .
   ```
 
-- CI's `Verify workflow lockfile` job uses v0.2.0 with a SHA256-verified binary
-  and `gh-actions-lock --verify` (the standalone extension binary) to validate
+- CI's `Pin actions` job verifies the workflow lockfile using v0.2.0 with a
+  SHA256-verified binary and `gh-actions-lock --verify` (the standalone extension binary) to validate
   all workflows against GitHub.
   `--verify-local` is an offline coverage check only.
 - Existing GitHub Actions Dependabot updates also update onboarded lockfile

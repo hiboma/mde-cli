@@ -1,0 +1,113 @@
+name: Release build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    if: github.ref_type == 'tag'
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Statically linked musl builds: no glibc dependency, so they run on
+          # any Linux regardless of the host glibc version (e.g. Ubuntu 22.04).
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            artifact: mde-cli
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+            artifact: mde-cli
+          - target: x86_64-apple-darwin
+            os: macos-15
+            artifact: mde-cli
+          - target: aarch64-apple-darwin
+            os: macos-15
+            artifact: mde-cli
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      # cargo-zigbuild links musl targets via zig as the C toolchain, so both
+      # x86_64 and aarch64 cross-compile without installing per-target gcc.
+      # cargo-zigbuild does NOT bundle zig, so zig must be installed separately.
+      - uses: mlugg/setup-zig@v2.2.1
+        if: contains(matrix.target, 'linux-musl')
+        with:
+          version: 0.13.0
+          # Disable caching: release builds must not consume runtime caches
+          # that a less-trusted workflow could poison (supply-chain hardening).
+          use-cache: false
+      - uses: taiki-e/install-action@v2.82.2
+        if: contains(matrix.target, 'linux-musl')
+        with:
+          tool: cargo-zigbuild@0.23.0
+
+      - name: Build (musl via zigbuild)
+        if: contains(matrix.target, 'linux-musl')
+        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
+
+      - name: Build
+        if: ${{ !contains(matrix.target, 'linux-musl') }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../mde-cli-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
+
+      - name: Attest build provenance
+        uses: actions/attest@v4.1.0
+        with:
+          subject-path: mde-cli-${{ matrix.target }}.tar.gz
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: mde-cli-${{ matrix.target }}
+          path: mde-cli-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  sbom:
+    name: Generate and attest SBOM
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@v2.82.2
+        with:
+          tool: cargo-cyclonedx@0.5.9
+      - name: Generate SBOM
+        run: |
+          cargo cyclonedx --format json --override-filename mde-cli-sbom
+          git diff --exit-code -- Cargo.lock
+          mv mde-cli-sbom.json mde-cli-sbom.cdx.json
+      - name: Attest SBOM provenance
+        uses: actions/attest@v4.1.0
+        with:
+          subject-path: mde-cli-sbom.cdx.json
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: mde-cli-sbom
+          path: mde-cli-sbom.cdx.json
+          if-no-files-found: error
+          retention-days: 1

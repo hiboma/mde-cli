@@ -8,108 +8,59 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
-    name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          # Statically linked musl builds: no glibc dependency, so they run on
-          # any Linux regardless of the host glibc version (e.g. Ubuntu 22.04).
-          - target: x86_64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: mde-cli
-          - target: aarch64-unknown-linux-musl
-            os: ubuntu-latest
-            artifact: mde-cli
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            artifact: mde-cli
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            artifact: mde-cli
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-
-      # cargo-zigbuild links musl targets via zig as the C toolchain, so both
-      # x86_64 and aarch64 cross-compile without installing per-target gcc.
-      # cargo-zigbuild does NOT bundle zig, so zig must be installed separately.
-      - uses: mlugg/setup-zig@v2.2.1
-        if: contains(matrix.target, 'linux-musl')
-        with:
-          version: 0.13.0
-          # Disable caching: release builds must not consume runtime caches
-          # that a less-trusted workflow could poison (supply-chain hardening).
-          use-cache: false
-      - uses: taiki-e/install-action@v2.82.2
-        if: contains(matrix.target, 'linux-musl')
-        with:
-          tool: cargo-zigbuild@0.23.0
-
-      - name: Build (musl via zigbuild)
-        if: contains(matrix.target, 'linux-musl')
-        run: cargo zigbuild --release --locked --target ${{ matrix.target }}
-
-      - name: Build
-        if: ${{ !contains(matrix.target, 'linux-musl') }}
-        run: cargo build --release --locked --target ${{ matrix.target }}
-
-      - name: Package
-        run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ../../../mde-cli-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
-
-      - uses: actions/upload-artifact@v7.0.1
-        with:
-          name: mde-cli-${{ matrix.target }}
-          path: mde-cli-${{ matrix.target }}.tar.gz
-
-  release:
-    name: Release
-    needs: build
-    runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
+    uses: ./.github/workflows/release-build.yml
+
+  release:
+    name: Verify and publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - uses: taiki-e/install-action@v2.82.2
-        with:
-          tool: cargo-cyclonedx@0.5.9
-
       - uses: actions/download-artifact@v8.0.1
         with:
+          pattern: mde-cli-*
           path: artifacts
           merge-multiple: true
 
-      - name: Generate SBOM
+      - name: Verify build provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cargo cyclonedx --format json --override-filename mde-cli-sbom
-          mv mde-cli-sbom.json artifacts/mde-cli-sbom.cdx.json
+          set -euo pipefail
+          for artifact in \
+            mde-cli-x86_64-unknown-linux-musl.tar.gz \
+            mde-cli-aarch64-unknown-linux-musl.tar.gz \
+            mde-cli-x86_64-apple-darwin.tar.gz \
+            mde-cli-aarch64-apple-darwin.tar.gz \
+            mde-cli-sbom.cdx.json; do
+            gh attestation verify "artifacts/$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-digest "$GITHUB_SHA" \
+              --source-ref "$GITHUB_REF" \
+              --signer-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release-build.yml" \
+              --deny-self-hosted-runners
+          done
+          test "$(find artifacts -type f | wc -l)" -eq 5
 
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4.1.0
-        with:
-          subject-path: artifacts/*.tar.gz
-
-      - name: Create release
+      - name: Create draft and publish release
         env:
           GH_TOKEN: ${{ github.token }}
           REF_NAME: ${{ github.ref_name }}
-        run: gh release create "$REF_NAME" artifacts/* --generate-notes
+        run: |
+          set -euo pipefail
+          gh release create "$REF_NAME" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --draft
+          gh release edit "$REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

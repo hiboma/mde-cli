@@ -188,9 +188,17 @@ async fn post_token_request(
         tenant_id
     );
 
+    post_token_request_at_url(&token_url, params, operation).await
+}
+
+async fn post_token_request_at_url(
+    token_url: &str,
+    params: &[(&str, &str)],
+    operation: &str,
+) -> Result<BrowserLoginResult, AppError> {
     let http = reqwest::Client::new();
     let resp = http
-        .post(&token_url)
+        .post(token_url)
         .form(&params)
         .send()
         .await
@@ -261,13 +269,26 @@ pub async fn refresh_access_token(
     refresh_token: &str,
     scope: &str,
 ) -> Result<BrowserLoginResult, AppError> {
+    let token_url = format!(
+        "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
+        tenant_id
+    );
+    refresh_access_token_at_url(&token_url, client_id, refresh_token, scope).await
+}
+
+pub(super) async fn refresh_access_token_at_url(
+    token_url: &str,
+    client_id: &str,
+    refresh_token: &str,
+    scope: &str,
+) -> Result<BrowserLoginResult, AppError> {
     let params = [
         ("grant_type", "refresh_token"),
         ("client_id", client_id),
         ("refresh_token", refresh_token),
         ("scope", scope),
     ];
-    post_token_request(tenant_id, &params, "token refresh").await
+    post_token_request_at_url(token_url, &params, "token refresh").await
 }
 
 #[cfg(test)]

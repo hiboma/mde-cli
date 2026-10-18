@@ -50,10 +50,8 @@ impl OAuth2Auth {
     }
 
     fn token_url(&self) -> String {
-        format!(
-            "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-            self.tenant_id
-        )
+        let tenant_id = &self.tenant_id;
+        format!("https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
     }
 
     pub async fn fetch_token(&self) -> Result<String, AppError> {

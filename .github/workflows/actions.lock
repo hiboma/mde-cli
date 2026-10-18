@@ -6,7 +6,7 @@ workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v6.0.2'
         - 'dtolnay/rust-toolchain@master'
-        - 'reviewdog/action-actionlint@v1.72.0'
+        - 'reviewdog/action-actionlint@v1.74.0'
         - 'swatinem/rust-cache@v2.9.1'
         - 'taiki-e/install-action@v2.82.2'
     '.github/workflows/release.yml':
@@ -69,9 +69,9 @@ dependencies:
         commit: 'sha1-4eaacf0543bb3f2c246792bd56e8cdeffafb205a'
         owner_id: 67707773
         repo_id: 421101922
-    'reviewdog/action-actionlint@v1.72.0':
-        ref: 'v1.72.0'
-        commit: 'sha1-6fb7acc99f4a1008869fa8a0f09cfca740837d9d'
+    'reviewdog/action-actionlint@v1.74.0':
+        ref: 'v1.74.0'
+        commit: 'sha1-8b682e1e7e512151d73a6b9449cbff173846226e'
         owner_id: 48765237
         repo_id: 385059686
     'swatinem/rust-cache@v2.9.1':

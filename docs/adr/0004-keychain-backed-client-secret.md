@@ -39,9 +39,6 @@
   trait 設計で将来追加可能とします。
 - 既存の toml 利用者がアップグレードしただけで挙動が変わらないこと
   （後方互換）。
-- agent モード（ADR-0001）との整合性を保つこと。agent は親プロセスで
-  解決した credentials を子プロセスのメモリに渡すため、Keychain への
-  追加読み込みが per-request で発生してはなりません。
 - CI / sandbox 環境（default keychain が無い）で resolve が破綻しない
   こと。
 
@@ -218,8 +215,6 @@ toml に残します。
 
 ## 先行事例
 
-- **ssh-agent / gpg-agent**: 秘密鍵をプロセスメモリに保持する方式
-  （ADR-0001 で採用済）
 - **`gh` CLI**: Keychain / Secret Service / Credential Manager を抽象化
   して OAuth トークンを保管
 - **Docker CLI**: `docker-credential-osxkeychain` 等の credential
@@ -247,8 +242,7 @@ toml に残します。
   `.env` を置けば Keychain 値を上書き可能です。TODO.md に follow-up
   として記録、別 PR で対処予定
 - **Keychain メモリダンプ**: root 権限による Keychain unlock 後の
-  メモリスキャンは ADR-0003 のプロセス hardening の延長で緩和し、
-  本 ADR のスコープ外とします
+  メモリスキャンへの対策は、本 ADR のスコープ外とします
 - **`keyring::Error` の locale 翻訳**: 日本語 macOS で `errSecNoDefault
   Keychain` のメッセージが翻訳されると `classify_keyring_err` の
   string match 漏れにより `Backend` 扱いになり、toml フォールバックが

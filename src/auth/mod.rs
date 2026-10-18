@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod clipboard;
 pub mod oauth2;
+pub mod resource;
 
 use crate::error::AppError;
 

@@ -178,6 +178,43 @@ pub struct BrowserLoginResult {
     pub refresh_token: Option<String>,
 }
 
+fn refresh_failure_message(status: reqwest::StatusCode, body: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct OAuthError {
+        error: String,
+        #[serde(default)]
+        error_codes: Vec<u64>,
+    }
+
+    if let Ok(error) = serde_json::from_str::<OAuthError>(body) {
+        if error.error == "invalid_grant" {
+            return if error.error_codes.contains(&700082) {
+                "Browser sign-in expired due to inactivity (AADSTS700082).".to_string()
+            } else {
+                "Browser sign-in is no longer valid (invalid_grant).".to_string()
+            };
+        }
+        if let Some(code) = error.error_codes.first() {
+            return format!("Could not refresh browser sign-in (HTTP {status}, AADSTS{code}).");
+        }
+        // Keep standard OAuth error identifiers useful without printing arbitrary
+        // server text or terminal control characters.
+        if !error.error.is_empty()
+            && error.error.len() <= 64
+            && error
+                .error
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+        {
+            return format!(
+                "Could not refresh browser sign-in (HTTP {status}, {}).",
+                error.error
+            );
+        }
+    }
+    format!("Could not refresh browser sign-in (HTTP {status}).")
+}
+
 async fn post_token_request(
     tenant_id: &str,
     params: &[(&str, &str)],
@@ -207,6 +244,9 @@ async fn post_token_request_at_url(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
+        if operation == "token refresh" {
+            return Err(AppError::Auth(refresh_failure_message(status, &body)));
+        }
         return Err(AppError::Auth(format!(
             "{} returned {}: {}",
             operation, status, body
@@ -294,6 +334,60 @@ pub(super) async fn refresh_access_token_at_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refresh_failure_explains_inactivity_without_raw_response() {
+        let body = r#"{"error":"invalid_grant","error_codes":[700082],"error_description":"private diagnostic data"}"#;
+        let message = refresh_failure_message(reqwest::StatusCode::BAD_REQUEST, body);
+        assert!(message.contains("expired due to inactivity"));
+        assert!(message.contains("AADSTS700082"));
+        assert!(!message.contains("private diagnostic data"));
+    }
+
+    #[test]
+    fn refresh_failure_does_not_assume_every_invalid_grant_is_inactivity() {
+        let message = refresh_failure_message(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_grant"}"#,
+        );
+        assert!(message.contains("no longer valid"));
+        assert!(!message.contains("inactivity"));
+    }
+
+    #[test]
+    fn refresh_failure_preserves_other_aadsts_codes() {
+        let message = refresh_failure_message(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_client","error_codes":[7000215]}"#,
+        );
+        assert!(message.contains("AADSTS7000215"));
+        assert!(!message.contains("expired"));
+    }
+
+    #[test]
+    fn refresh_failure_handles_non_json_without_printing_response_body() {
+        let message = refresh_failure_message(
+            reqwest::StatusCode::BAD_GATEWAY,
+            "<html>proxy diagnostic data</html>",
+        );
+        assert!(message.contains("502"));
+        assert!(!message.contains("proxy diagnostic data"));
+        assert!(!message.contains("expired"));
+    }
+
+    #[test]
+    fn refresh_failure_preserves_oauth_error_but_rejects_control_characters() {
+        let message = refresh_failure_message(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_client"}"#,
+        );
+        assert!(message.contains("invalid_client"));
+        let message = refresh_failure_message(
+            reqwest::StatusCode::BAD_REQUEST,
+            r#"{"error":"invalid_client\u001b[31m"}"#,
+        );
+        assert!(!message.contains('\u{001b}'));
+    }
 
     #[test]
     fn test_generate_pkce() {

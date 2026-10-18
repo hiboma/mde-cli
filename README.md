@@ -287,10 +287,12 @@ export MDE_CLIENT_SECRET="your-secret"
 ```
 
 If browser sign-in expires, run `mde-cli auth login` again and retry your
-command. When a client secret is configured, the CLI prints a notice and
-continues with application authentication instead. This uses the application's
+command. For MDE commands such as `alerts`, when a client secret is configured,
+the CLI prints a notice and continues with application authentication instead. This uses the application's
 permissions rather than the signed-in user's permissions; the notice does not
-mean that the API request has failed or succeeded.
+mean that the API request has failed or succeeded. Graph commands (`hunting` and
+`incidents`) stop if refreshing browser sign-in fails, even when a client secret
+is configured, so their delegated identity does not change silently.
 
 ### Alerts
 

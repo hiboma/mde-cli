@@ -54,5 +54,5 @@ strip = true
 assert_cmd = "2"
 mockito = "1"
 predicates = "3"
-serial_test = "3"
+serial_test = "4"
 tempfile = "3"

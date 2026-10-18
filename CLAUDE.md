@@ -110,7 +110,32 @@ cargo fmt                # Format
 - Review changes to `commit`, `owner_id`, and `repo_id` before merging.
   In particular, identity changes may indicate a renamed or replaced repository.
 - Lockfile verification replaces pinact. `.github/zizmor.yml` ignores only
-  `unpinned-uses` for the three onboarded workflows because their commits are
+  `unpinned-uses` for the onboarded workflows because their commits are
   fixed in the lockfile; other security checks remain enabled.
 - The lockfile covers action dependencies, not tools downloaded by `run:` steps
   or Rust dependencies. Keep their version/checksum pins and `Cargo.lock`.
+
+### Release provenance and immutability
+
+- `release.yml` runs on `v*` tag pushes and calls `release-build.yml` at the
+  same commit. The reusable workflow accepts no build commands or source-ref
+  inputs and uses GitHub-hosted Ubuntu 24.04 / macOS 15 runners.
+- The builder packages and attests each of the four archives before upload.
+  Its SBOM job also generates and attests `mde-cli-sbom.cdx.json`. This is
+  provenance for the SBOM file, not an SBOM predicate attached to each binary.
+- Only the builder has `id-token: write` and `attestations: write`. The publishing
+  job has `contents: write` and verifies all five files against the expected
+  repository, source ref/commit, and reusable signer workflow/commit before any
+  release is created.
+- Publish a draft only after all five verified assets have been uploaded.
+  Immutable releases must be enabled in repository Settings > General > Releases.
+  Published assets and tags cannot be replaced; ship corrections under a new tag.
+  If upload or publication fails, inspect the remaining draft and its assets
+  before retrying; the workflow does not overwrite an existing release.
+- Action commits are fixed by `actions.lock`; Cargo dependencies and auxiliary
+  tools retain their locks/version pins. Rust still tracks `stable`, hosted
+  runner images receive updates, and archive timestamps are not normalized.
+  This workflow does not claim byte-for-byte reproducibility or certified SLSA
+  conformance.
+- After merging, validate the first release's five attestations and immutable
+  status on GitHub. Local lint/mocked checks cannot issue real OIDC attestations.

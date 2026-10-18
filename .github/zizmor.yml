@@ -6,4 +6,5 @@ rules:
     ignore:
       - ci.yml
       - release.yml
+      - release-build.yml
       - scorecard.yml

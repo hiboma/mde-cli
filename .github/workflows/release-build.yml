@@ -70,7 +70,7 @@ jobs:
           tar czf ../../../mde-cli-${{ matrix.target }}.tar.gz ${{ matrix.artifact }}
 
       - name: Attest build provenance
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@v4.2.1
         with:
           subject-path: mde-cli-${{ matrix.target }}.tar.gz
 
@@ -102,7 +102,7 @@ jobs:
           git diff --exit-code -- Cargo.lock
           mv mde-cli-sbom.json mde-cli-sbom.cdx.json
       - name: Attest SBOM provenance
-        uses: actions/attest@v4.1.0
+        uses: actions/attest@v4.2.1
         with:
           subject-path: mde-cli-sbom.cdx.json
       - uses: actions/upload-artifact@v7.0.1

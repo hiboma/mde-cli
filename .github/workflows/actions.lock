@@ -10,7 +10,7 @@ workflows:
         - 'swatinem/rust-cache@v2.9.1'
         - 'taiki-e/install-action@v2.82.2'
     '.github/workflows/release-build.yml':
-        - 'actions/attest@v4.1.0'
+        - 'actions/attest@v4.2.1'
         - 'actions/checkout@v6.0.2'
         - 'actions/upload-artifact@v7.0.1'
         - 'dtolnay/rust-toolchain@master'
@@ -23,9 +23,9 @@ workflows:
         - 'github/codeql-action@v4.38.0'
         - 'ossf/scorecard-action@v2.4.3'
 dependencies:
-    'actions/attest@v4.1.0':
-        ref: 'v4.1.0'
-        commit: 'sha1-59d89421af93a897026c735860bf21b6eb4f7b26'
+    'actions/attest@v4.2.1':
+        ref: 'v4.2.1'
+        commit: 'sha1-508db95dd578ae2727ebd6217d5ba78e4fbda05d'
         owner_id: 44036562
         repo_id: 760701061
     'actions/checkout@v6.0.2':

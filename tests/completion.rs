@@ -1,7 +1,7 @@
 //! Integration tests for `mde-cli completion <SHELL>`.
 //!
-//! The completion subcommand must be runnable without any credentials or
-//! agent context — installing completions is something users do before
+//! The completion subcommand must be runnable without any credentials —
+//! installing completions is something users do before
 //! authenticating. These tests guard the early-return path in `run()` so a
 //! future refactor cannot accidentally require credentials to print a
 //! completion script.
@@ -14,9 +14,7 @@ fn mde_cmd() -> Command {
     cmd.env_remove("MDE_TENANT_ID")
         .env_remove("MDE_CLIENT_ID")
         .env_remove("MDE_CLIENT_SECRET")
-        .env_remove("MDE_ACCESS_TOKEN")
-        .env_remove("MDE_AGENT_TOKEN")
-        .env_remove("MDE_AGENT_SOCKET");
+        .env_remove("MDE_ACCESS_TOKEN");
     cmd
 }
 

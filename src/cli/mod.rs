@@ -1,4 +1,3 @@
-pub mod agent;
 pub mod alerts;
 pub mod auth;
 pub mod credentials;
@@ -33,7 +32,6 @@ Resources:
 
 Authentication:
   auth               Authenticate and manage tokens
-  agent              Manage the credential isolation agent
   credentials        Manage stored credentials (Keychain on macOS)
 
 Other:
@@ -68,18 +66,6 @@ pub struct Cli {
     /// Output raw API response without extracting data
     #[arg(long, global = true, hide = true)]
     pub raw: bool,
-
-    /// Agent socket path (hidden, set by agent start)
-    #[arg(long, env = "MDE_AGENT_SOCKET", global = true, hide = true)]
-    pub socket: Option<String>,
-
-    /// Agent session token (hidden, set by agent start)
-    #[arg(long, env = "MDE_AGENT_TOKEN", global = true, hide = true)]
-    pub token: Option<String>,
-
-    /// Skip agent auto-detection and use direct API mode
-    #[arg(long, global = true, hide = true)]
-    pub no_agent: bool,
 }
 
 #[derive(Subcommand)]
@@ -149,12 +135,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<indicators::IndicatorsCommand>,
     },
-    /// Manage the credential isolation agent
-    #[command(subcommand_required = true, arg_required_else_help = true, hide = true)]
-    Agent {
-        #[command(subcommand)]
-        command: agent::AgentCommand,
-    },
     /// Manage stored credentials (macOS Keychain)
     #[command(
         subcommand_required = true,
@@ -193,7 +173,6 @@ impl Commands {
             Commands::Hunting { .. } => "hunting",
             Commands::Machines { .. } => "machines",
             Commands::Indicators { .. } => "indicators",
-            Commands::Agent { .. } => "agent",
             Commands::Credentials { .. } => "credentials",
             Commands::Doctor => "doctor",
             Commands::Completion { .. } => "completion",

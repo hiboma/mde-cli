@@ -203,8 +203,6 @@ fn print_environment_section() {
         ("MDE_CLIENT_SECRET", true),
         ("MDE_ACCESS_TOKEN", true),
         ("MDE_OUTPUT_FORMAT", false),
-        ("MDE_AGENT_SOCKET", false),
-        ("MDE_AGENT_TOKEN", true),
     ];
     for (name, is_secret) in vars {
         let state = match std::env::var(name) {

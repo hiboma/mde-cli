@@ -1,11 +1,9 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
 use std::io;
-use std::path::PathBuf;
 use std::process;
 
 use mde::auth::resource::{GRAPH_SCOPE, MDE_SCOPE, build_mde_client};
-use mde::cli::agent::AgentCommand;
 use mde::cli::{Cli, Commands};
 use mde::config::MdeCredentials;
 use mde::error::AppError;
@@ -85,80 +83,19 @@ fn main() {
         return;
     }
 
-    // Resolve credentials early (before fork).
+    // Resolve credentials before creating the tokio runtime.
     let credentials = MdeCredentials::resolve(cli.tenant_id.as_deref(), cli.client_id.as_deref());
 
     // Scrub MDE_* from this process's environment immediately after
-    // resolution. Previously this was only done in the agent-fork path,
-    // but for direct-API invocations the secret was visible via `ps -E`
-    // / `/proc/<pid>/environ` for the lifetime of the process. Doing it
-    // here makes both code paths consistent and runs while we are still
-    // single-threaded (before tokio runtime creation).
+    // resolution to limit credential exposure. This runs while the process
+    // is single-threaded, before tokio runtime creation.
     //
     // SAFETY: Single-threaded context (before tokio runtime creation).
     unsafe {
         MdeCredentials::clear_env();
     }
 
-    // Handle agent start (fork) before creating tokio runtime.
-    // fork() is unsafe in multi-threaded processes, so we must do it here.
-    if let Some(Commands::Agent {
-        command:
-            AgentCommand::Start {
-                socket,
-                config: agent_config,
-                foreground,
-            },
-    }) = &cli.command
-        && !foreground
-    {
-        let session_token = mde::agent::generate_token();
-        let socket_path = socket.as_ref().map(PathBuf::from);
-        let config_path = agent_config.as_ref().map(PathBuf::from);
-
-        if let Err(e) = mde::agent::validate_credentials(&credentials) {
-            eprintln!("Error: {}", e);
-            process::exit(1);
-        }
-
-        // Check if an agent is already running before fork.
-        if let Some(session) = mde::agent::session::read_session() {
-            let socket = std::path::Path::new(&session.socket_path);
-            if std::os::unix::net::UnixStream::connect(socket).is_ok() {
-                eprintln!("agent: already started (pid {})", session.pid);
-                process::exit(0);
-            }
-        }
-
-        // (env was already scrubbed right after resolve(); no-op here.)
-
-        if let Err(e) = mde::agent::ensure_socket_dir() {
-            eprintln!("Error: failed to create socket directory: {}", e);
-            process::exit(1);
-        }
-
-        match mde::agent::server::fork_into_background(
-            socket_path,
-            config_path,
-            session_token.clone(),
-            credentials,
-        ) {
-            Ok((child_pid, _socket_path)) => {
-                eprintln!("agent started, pid {}", child_pid);
-                eprintln!(
-                    "session file: {}",
-                    mde::agent::session::session_file_path().display()
-                );
-                process::exit(0);
-            }
-            Err(e) => {
-                eprintln!("Error: failed to start agent: {}", e);
-                process::exit(1);
-            }
-        }
-    }
-
-    // Create tokio runtime for all other operations.
+    // Create the tokio runtime after scrubbing credentials from the environment.
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         if let Err(e) = run(cli, credentials).await {
@@ -186,8 +123,8 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
     }
 
     // Handle doctor diagnostics. doctor resolves credentials itself (with
-    // provenance) and never routes through the agent; it reports on the
-    // local config/credentials/environment and probes connectivity.
+    // provenance), reports on local config/credentials/environment, and
+    // probes connectivity.
     //
     // We deliberately do NOT forward cli.tenant_id / cli.client_id here.
     // clap folds the `--tenant-id` flag and the `MDE_TENANT_ID` env var into
@@ -203,36 +140,6 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
     // Handle credentials store management (does not require API credentials).
     if let Commands::Credentials { command: cred_cmd } = &command {
         return mde::commands::credentials::handle(cred_cmd);
-    }
-
-    // Handle agent subcommands.
-    if let Commands::Agent { command: agent_cmd } = &command {
-        return handle_agent_command(agent_cmd, credentials).await;
-    }
-
-    // Check if we should route through the agent.
-    // Commands without a subaction (e.g. `mde alerts` without `list`) display help locally.
-    if !cli.no_agent
-        && let Some(ref agent_token) = cli.token
-        && requires_agent_routing(&command)
-    {
-        let socket_path = cli
-            .socket
-            .as_ref()
-            .map(PathBuf::from)
-            .unwrap_or_else(mde::agent::resolve_socket_path);
-
-        return route_through_agent(&command, &socket_path, agent_token).await;
-    }
-
-    // If no explicit token but a session file exists, use it for auto-detection.
-    if !cli.no_agent
-        && cli.token.is_none()
-        && requires_agent_routing(&command)
-        && let Some(session) = mde::agent::session::read_session()
-        && mde::agent::session::is_session_alive(&session)
-    {
-        return route_through_agent_from_session(&command, session).await;
     }
 
     // Auth commands only need tenant_id and client_id
@@ -290,13 +197,20 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
                 credentials.access_token = Some(result.access_token);
             }
             Err(e) => {
-                eprintln!("warning: token refresh failed: {}", e);
+                let reason = match &e {
+                    AppError::Auth(message) => message.clone(),
+                    _ => e.to_string(),
+                };
                 if credentials.client_secret.is_none() {
-                    return Err(AppError::Auth(
-                        "Authentication expired. Run `mde-cli auth login` to re-authenticate."
-                            .to_string(),
-                    ));
+                    return Err(AppError::Auth(format!(
+                        "{reason}\nRun `mde-cli auth login` to sign in again, then retry this command."
+                    )));
                 }
+                eprintln!(
+                    "ℹ️ notice: {reason}\n\
+                     Continuing with application authentication using the configured client secret.\n\
+                     To renew browser sign-in, run `mde-cli auth login`."
+                );
             }
         }
     }
@@ -339,176 +253,12 @@ async fn run(cli: Cli, mut credentials: MdeCredentials) -> Result<(), AppError> 
     }
 }
 
-/// Handle agent subcommands (start foreground, stop, status).
-async fn handle_agent_command(
-    cmd: &AgentCommand,
-    credentials: MdeCredentials,
-) -> Result<(), AppError> {
-    match cmd {
-        AgentCommand::Start {
-            socket,
-            config,
-            foreground,
-        } => {
-            // Foreground mode (background is handled before tokio runtime).
-            debug_assert!(*foreground, "background mode should be handled in main()");
-
-            mde::agent::validate_credentials(&credentials).map_err(AppError::Config)?;
-
-            // (env was already scrubbed in main() before tokio runtime
-            // creation; no clear_env call needed here.)
-
-            let session_token = mde::agent::generate_token();
-            let socket_path = socket.as_ref().map(PathBuf::from);
-            let config_path = config.as_ref().map(PathBuf::from);
-
-            mde::agent::ensure_socket_dir()
-                .map_err(|e| AppError::Config(format!("failed to create socket dir: {}", e)))?;
-
-            let pid = std::process::id();
-            let actual_socket = socket_path.unwrap_or_else(|| mde::agent::pid_socket_path(pid));
-
-            mde::agent::server::start(
-                Some(actual_socket),
-                config_path,
-                &session_token,
-                credentials,
-            )
-            .await
-            .map_err(|e| AppError::Config(format!("agent error: {}", e)))?;
-
-            Ok(())
-        }
-        AgentCommand::Stop { socket, all } => {
-            let msg = if *all {
-                mde::agent::client::stop_all()?
-            } else if let Some(s) = socket {
-                mde::agent::client::stop(&PathBuf::from(s))?
-            } else {
-                mde::agent::client::stop_from_session()?
-            };
-            println!("{}", msg);
-            Ok(())
-        }
-        AgentCommand::Status => {
-            let msg = mde::agent::client::status().await?;
-            println!("{}", msg);
-            Ok(())
-        }
-    }
-}
-
-/// Route a command through the agent via UDS.
-async fn route_through_agent(
-    command: &Commands,
-    socket_path: &std::path::Path,
-    agent_token: &str,
-) -> Result<(), AppError> {
-    let (cmd_name, action, args) = extract_command_args(command);
-
-    let output =
-        mde::agent::client::send_command(&cmd_name, &action, &args, socket_path, agent_token)
-            .await?;
-
-    print!("{}", output);
-    Ok(())
-}
-
-/// Route a command through the agent using session file info.
-async fn route_through_agent_from_session(
-    command: &Commands,
-    session: mde::agent::session::SessionInfo,
-) -> Result<(), AppError> {
-    let socket_path = PathBuf::from(&session.socket_path);
-    let (cmd_name, action, args) = extract_command_args(command);
-
-    let output =
-        mde::agent::client::send_command(&cmd_name, &action, &args, &socket_path, &session.token)
-            .await?;
-
-    print!("{}", output);
-    Ok(())
-}
-
 /// Graph commands resolve their own resource token without refreshing the MDE bundle first.
 fn needs_mde_prerefresh(command: &Commands) -> bool {
     !matches!(
         command,
         Commands::Hunting { .. } | Commands::Incidents { .. }
     )
-}
-
-/// Check if a command has a subaction and should be routed through the agent.
-/// Commands without a subaction (e.g. `mde alerts`) only display help,
-/// which can be handled locally without agent involvement.
-fn requires_agent_routing(command: &Commands) -> bool {
-    match command {
-        Commands::Alerts { command } => command.is_some(),
-        Commands::Incidents { command } => command.is_some(),
-        Commands::Hunting { command } => command.is_some(),
-        Commands::Machines { command } => command.is_some(),
-        Commands::Indicators { command } => command.is_some(),
-        Commands::Auth { command } => command.is_some(),
-        Commands::Agent { .. } => false, // agent commands are handled separately
-        Commands::Credentials { .. } => false, // handled locally
-        Commands::Doctor => false,       // handled locally
-        Commands::Completion { .. } => false, // handled locally
-    }
-}
-
-/// Extract command name, action, and remaining args from a Commands variant.
-/// Global flags like --output and --raw are preserved and passed to the agent.
-/// Only agent-specific flags (--socket, --token) are stripped.
-fn extract_command_args(command: &Commands) -> (String, String, Vec<String>) {
-    let cmd_name = command.name().to_string();
-
-    let all_args: Vec<String> = std::env::args().collect();
-    let mut action = String::new();
-    let mut extra_args = Vec::new();
-    let mut found_command = false;
-
-    // Only strip agent-specific flags that the server should not see.
-    // Global flags like --output, --raw, --tenant-id are passed through
-    // so the agent can honor the requested output format.
-    let strip_flags_with_value = ["--socket", "--token"];
-    let strip_flags_bool = ["--no-agent"];
-
-    let mut skip_next = false;
-    for arg in all_args.iter().skip(1) {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-
-        // Check if this flag should be stripped (exact match or --flag=value).
-        let should_strip = strip_flags_with_value
-            .iter()
-            .any(|f| *arg == *f || arg.starts_with(&format!("{}=", f)))
-            || strip_flags_bool.iter().any(|f| *arg == *f);
-
-        if should_strip {
-            // If it's a --flag value (not --flag=value), skip the next arg too.
-            if strip_flags_with_value.iter().any(|f| *arg == *f) && !arg.contains('=') {
-                skip_next = true;
-            }
-            continue;
-        }
-
-        if !found_command {
-            if *arg == cmd_name || *arg == command.name() {
-                found_command = true;
-            }
-            continue;
-        }
-
-        if action.is_empty() {
-            action = arg.clone();
-        } else {
-            extra_args.push(arg.clone());
-        }
-    }
-
-    (cmd_name, action, extra_args)
 }
 
 #[cfg(test)]
@@ -559,7 +309,6 @@ mod tests {
             vec!["mde-cli", "alerts", "list"],
             vec!["mde-cli", "machines", "list"],
             vec!["mde-cli", "indicators", "list"],
-            vec!["mde-cli", "agent", "status"],
             vec!["mde-cli", "credentials", "status"],
             vec!["mde-cli", "doctor"],
             vec!["mde-cli", "completion", "zsh"],

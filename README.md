@@ -9,7 +9,6 @@ A command-line tool for interacting with the [Microsoft Defender for Endpoint AP
 - **Advanced Hunting** - Run KQL queries against the advanced hunting API
 - **Machines** - List, get machine details, view timelines and logon users, and manage device tags
 - **Indicators** - Create, list, and delete indicators (exclusions/blocks)
-- **Agent Mode** - Credential isolation for use with LLM agents (ssh-agent pattern)
 - **OAuth2 Authentication** - Browser login (Authorization Code Flow with PKCE) and client credentials
 - **Doctor** - Diagnose configuration, credential provenance, environment, and connectivity
 
@@ -264,7 +263,7 @@ Security notes:
   `access_token`, and `refresh_token` are reported by presence and source
   only. `client_id` is masked to its first four characters.
 - Secret-bearing environment variables (`MDE_CLIENT_SECRET`,
-  `MDE_ACCESS_TOKEN`, `MDE_AGENT_TOKEN`) are shown as `(set, hidden)` /
+  `MDE_ACCESS_TOKEN`) are shown as `(set, hidden)` /
   `(unset)` — never their value.
 - The connectivity probe sends the bearer token in the request but only
   the HTTP status and elapsed time are printed. A `401`/`403` still
@@ -286,6 +285,14 @@ export MDE_TENANT_ID="your-tenant-id"
 export MDE_CLIENT_ID="your-client-id"
 export MDE_CLIENT_SECRET="your-secret"
 ```
+
+If browser sign-in expires, run `mde-cli auth login` again and retry your
+command. For MDE commands such as `alerts`, when a client secret is configured,
+the CLI prints a notice and continues with application authentication instead. This uses the application's
+permissions rather than the signed-in user's permissions; the notice does not
+mean that the API request has failed or succeeded. Graph commands (`hunting` and
+`incidents`) stop if refreshing browser sign-in fails, even when a client secret
+is configured, so their delegated identity does not change silently.
 
 ### Alerts
 
@@ -345,26 +352,6 @@ mde-cli indicators create <SHA256> \
 mde-cli indicators delete <indicator-id>
 ```
 
-### Agent Mode (Credential Isolation)
-
-Agent mode isolates credentials from the process that invokes `mde-cli` commands. This is useful when running under LLM agents (e.g., Claude Code) where you want to prevent credential leakage via prompt injection.
-
-```bash
-# Start the agent (credentials stay in this process)
-eval "$(op run --env-file .env.1password -- mde-cli agent start)"
-
-# Now commands route through the agent automatically
-mde-cli alerts list
-
-# Check agent status
-mde-cli agent status
-
-# Stop the agent
-mde-cli agent stop
-```
-
-See [ADR-0001](docs/adr/0001-agent-mode-for-credential-isolation.md) for the design rationale.
-
 ### Output Formats
 
 ```bash
@@ -389,15 +376,10 @@ mde-cli alerts list --raw
 | `hunting`, `incidents` | `https://graph.microsoft.com` | `https://graph.microsoft.com/.default` |
 
 After browser login, `hunting` and `incidents` exchange the refresh token for
-a Graph access token on each invocation, including when dispatched through the
-agent. The Graph access token is not cached and does not replace the MDE access
+a Graph access token on each invocation. The Graph access token is not cached
+and does not replace the MDE access
 token in Keychain; only a rotated refresh token is updated when the stored
 refresh token still matches the one used for the exchange.
-
-The agent still holds its startup credentials: it does not reload rotated
-refresh tokens or refresh expired MDE tokens. Restart the agent after logging
-in again or if its refresh token becomes invalid. Subsequent rotations from an
-already-running agent may not be persisted once the stored token has changed.
 
 When using `MDE_ACCESS_TOKEN`, supply a token for the command’s target resource.
 This explicit token takes precedence over the stored browser session; its

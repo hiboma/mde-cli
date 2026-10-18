@@ -213,7 +213,7 @@ pub struct CredentialProvenance {
 /// Resolved MDE credentials collected from CLI args, environment variables,
 /// the OS credential store (e.g. macOS Keychain), and credentials.toml.
 /// Once constructed, the process should unset the MDE_* environment variables so that
-/// forked child processes (agent) do not inherit credentials via the environment.
+/// child processes do not inherit credentials via the environment.
 #[derive(Clone)]
 pub struct MdeCredentials {
     pub tenant_id: Option<String>,
@@ -357,24 +357,30 @@ impl MdeCredentials {
             }
         };
 
-        let bundle = resolve_token_bundle(store);
+        // An explicit token overrides the entire stored browser session.
+        // Avoid prompting for Keychain access when that session is not used.
+        let env_access_token = std::env::var("MDE_ACCESS_TOKEN").ok();
+        let bundle = if env_access_token.is_none() {
+            resolve_token_bundle(store)
+        } else {
+            None
+        };
 
-        let (access_token, access_token_expires_at) =
-            if let Ok(v) = std::env::var("MDE_ACCESS_TOKEN") {
-                // Env-supplied token: expiry is unknown to us.
-                (Resolved::found(v, Source::Env("MDE_ACCESS_TOKEN")), None)
-            } else if let Some(b) = bundle.as_ref() {
-                if is_bundle_expired(b) {
-                    (Resolved::none(), Some(b.expires_at))
-                } else {
-                    (
-                        Resolved::found(b.access_token.clone(), Source::Keychain(KEY_TOKEN_BUNDLE)),
-                        Some(b.expires_at),
-                    )
-                }
+        let (access_token, access_token_expires_at) = if let Some(v) = env_access_token {
+            // Env-supplied token: expiry is unknown to us.
+            (Resolved::found(v, Source::Env("MDE_ACCESS_TOKEN")), None)
+        } else if let Some(b) = bundle.as_ref() {
+            if is_bundle_expired(b) {
+                (Resolved::none(), Some(b.expires_at))
             } else {
-                (Resolved::none(), None)
-            };
+                (
+                    Resolved::found(b.access_token.clone(), Source::Keychain(KEY_TOKEN_BUNDLE)),
+                    Some(b.expires_at),
+                )
+            }
+        } else {
+            (Resolved::none(), None)
+        };
 
         // An explicit access token must not switch to a stored browser session
         // when a Graph command resolves its resource-specific token.
